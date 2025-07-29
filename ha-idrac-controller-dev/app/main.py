@@ -68,6 +68,12 @@ class ServerWorker:
             ip_address=self.config.get("idrac_ip")
         )
         self.mqtt.connect()
+        
+            # Wire up the message handler and subscribe to the command topic
+        self.mqtt.message_callback = self._on_mqtt_message
+        self.mqtt.subscribe(f"{self.mqtt.base_topic}/command/shutdown")
+
+    # Wait up to 10 seconds for the connection to be established.
 
         for _ in range(10):
             if self.mqtt.is_connected:
@@ -98,6 +104,7 @@ class ServerWorker:
             temps = self.ipmi.parse_temperatures(raw_temp_data, r"Temp", r"Inlet Temp", r"Exhaust Temp")
             fans = self.ipmi.parse_fan_rpms(self.ipmi.retrieve_fan_rpms_raw())
             power = self.ipmi.parse_power_consumption(self.ipmi.retrieve_power_sdr_raw())
+            psu_statuses = self.ipmi.get_psu_status()
 
             hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
             target_fan_speed = "Dell Auto"
@@ -126,7 +133,8 @@ class ServerWorker:
                 "power": power,
                 "target_fan_speed": None if isinstance(target_fan_speed, str) else target_fan_speed,
                 "cpus": temps.get('cpu_temps', []),
-                "fans": fans
+                "fans": fans,
+                "psus": psu_statuses
             }
             
             # This data structure is for the Web UI, using the keys the template expects
@@ -141,7 +149,8 @@ class ServerWorker:
                     "power_consumption_watts": power,
                     "target_fan_speed_percent": target_fan_speed, # Fixed key
                     "cpu_temps_c": temps.get('cpu_temps', []),
-                    "actual_fan_rpms": fans
+                    "actual_fan_rpms": fans,
+                    "psu_statuses": psu_statuses 
                 }
             
             self._publish_mqtt_data(mqtt_status_data)
@@ -161,15 +170,21 @@ class ServerWorker:
             "exhaust_temp": {"component": "sensor", "device_class": "temperature", "unit": "°C"},
             "power": {"component": "sensor", "device_class": "power", "unit": "W", "state_class": "measurement", "icon": "mdi:flash"},
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
+            "shutdown_button": {"component": "button", "name": "Shutdown Server", "device_class": "restart", "icon": "mdi:server-off"},
         }
         for i, temp in enumerate(status.get('cpus', [])):
             sensors_to_publish[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C"}
         for fan in status.get('fans', []):
             slug = f"fan_{re.sub(r'[^a-zA-Z0-9_]+', '', fan['name']).lower()}_rpm"
             sensors_to_publish[slug] = {"component": "sensor", "name": f"{fan['name']} RPM", "unit": "RPM", "icon": "mdi:fan"}
+        for psu in status.get('psus', []):
+            slug = f"psu_{re.sub(r'[^a-zA-Z0-9_]+', '', psu['name']).lower()}"
+            sensors_to_publish[slug] = {"component": "binary_sensor", "name": psu['name'], "device_class": "problem"}
+
 
         for slug, desc in sensors_to_publish.items():
             if slug not in self.discovered_sensors:
+                command_topic = f"{self.mqtt.base_topic}/command/shutdown" if desc['component'] == 'button' else None
                 self.mqtt.publish_discovery(desc['component'], slug, desc.get('name', slug.replace("_", " ").title()), desc.get('device_class'), desc.get('unit'), desc.get('icon'), None, desc.get('state_class'))
                 self.discovered_sensors.add(slug)
             
@@ -190,6 +205,13 @@ class ServerWorker:
                     value = status.get(slug)
                 
                 self.mqtt.publish_state(slug, value)
+            elif desc['component'] == 'binary_sensor' and slug.startswith('psu_'):
+                psu_name = desc['name']
+                psu_data = next((p for p in status['psus'] if p['name'] == psu_name), None)
+                # State is 'ON' if there is a problem (not ok), 'OFF' if it's fine.
+                state = "ON" if psu_data and not psu_data['ok'] else "OFF"
+                self.mqtt.publish(f"{self.mqtt.base_topic}/binary_sensor/{slug}", state)
+
 
     def cleanup(self):
         self._log("info", "Worker shutting down. Reverting to Dell auto fans.")
@@ -200,6 +222,13 @@ class ServerWorker:
 
     def stop(self):
         self.running = False
+        
+    def _on_mqtt_message(self, topic, payload):
+        """Handles incoming MQTT commands."""
+        command_topic = f"{self.mqtt.base_topic}/command/shutdown"
+        if topic == command_topic and payload == "PRESS":
+            self._log("info", "Shutdown command received via MQTT.")
+            self.ipmi.chassis_shutdown()
 
 # --- Main Execution ---
 if __name__ == "__main__":

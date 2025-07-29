@@ -196,3 +196,32 @@ class IPMIManager:
         
         self._log("warning", "Power Consumption sensor (Watts) not found in SDR data.")
         return None
+    
+    def get_psu_status(self):
+        """Retrieves the status of all Power Supply Units."""
+        self._log("debug", "Retrieving PSU status from SDR...")
+        sdr_data = self._run_ipmi_command(["sdr", "elist"], is_raw_command=False)
+        psu_statuses = []
+        if not sdr_data:
+            return psu_statuses
+
+        # Regex to find PSU status sensors, e.g., "PSU1 Status      | 6Fh | ok  | 10.1 | Presence Detected"
+        psu_regex = re.compile(r"^(PSU\d+\sStatus)\s*\|.*?\|\s*(ok|nr)")
+
+        for line in sdr_data.splitlines():
+            match = psu_regex.search(line)
+            if match:
+                psu_name = match.group(1).strip()
+                # Status 'ok' means the PSU is healthy. 'nr' (Not Redundant) can also mean OK if it's the only one.
+                # Any other status (e.g., failure, not present) will not match 'ok|nr' and be considered a problem.
+                status_ok = match.group(2) in ['ok', 'nr']
+                psu_statuses.append({"name": psu_name, "ok": status_ok})
+                self._log("debug", f"Found PSU: {psu_name}, Status OK: {status_ok}")
+        
+        return psu_statuses
+
+    def chassis_shutdown(self):
+        """Sends a graceful ACPI shutdown command to the server."""
+        self._log("info", "Sending graceful shutdown command to server...")
+        # We use 'power soft' for a graceful shutdown.
+        return self._run_ipmi_command(["chassis", "power", "soft"], is_raw_command=False)

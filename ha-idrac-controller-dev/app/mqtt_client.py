@@ -13,6 +13,7 @@ class MqttClient:
         self.password = ""
         self.is_connected = False
         self.log_level = "info"
+        self.message_callback = None
         
         self.base_topic = "ha_idrac_controller"
         self.availability_topic = f"{self.base_topic}/status"
@@ -100,7 +101,11 @@ class MqttClient:
             "device": self.device_info_dict,
             "availability_topic": self.availability_topic,
         }
-        
+        if command_topic:
+            payload["command_topic"] = command_topic
+            # For buttons, the payload is often defined
+            payload["payload_press"] = "PRESS"
+
         if component == 'sensor':
             payload["state_topic"] = f"{self.base_topic}/sensor/{sensor_type_slug}"
             payload["json_attributes_topic"] = f"{self.base_topic}/sensor/{sensor_type_slug}"
@@ -127,3 +132,13 @@ class MqttClient:
             payload.update(attributes)
             
         self.publish(topic, json.dumps(payload))
+    
+    def _on_message(self, client, userdata, msg):
+        """Internal message handler that calls the user-defined callback."""
+        if self.message_callback:
+            self.message_callback(msg.topic, msg.payload.decode('utf-8'))
+
+    def subscribe(self, topic):
+        """Subscribes the client to a specific topic."""
+        self._log("info", f"Subscribing to command topic: {topic}")
+        self.client.subscribe(topic)

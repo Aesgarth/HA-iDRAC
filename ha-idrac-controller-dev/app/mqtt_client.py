@@ -13,14 +13,15 @@ class MqttClient:
         self.password = ""
         self.is_connected = False
         self.log_level = "info"
-        self.message_callback = None
         
         self.base_topic = "ha_idrac_controller"
         self.availability_topic = f"{self.base_topic}/status"
         self.device_info_dict = None
+        self.message_callback = None
 
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
+        self.client.on_message = self._on_message
 
     def _log(self, level, message):
         levels = {"trace": -1, "debug": 0, "info": 1, "warning": 2, "error": 3, "fatal": 4}
@@ -61,6 +62,10 @@ class MqttClient:
         self._log("info", f"Disconnected from broker with result code {rc}.")
         self.is_connected = False
 
+    def _on_message(self, client, userdata, msg):
+        if self.message_callback:
+            self.message_callback(msg.topic, msg.payload.decode('utf-8'))
+
     def connect(self):
         if self.is_connected: return
         self._log("info", f"Attempting to connect to broker {self.broker_address}...")
@@ -79,6 +84,10 @@ class MqttClient:
         self._log("info", "Gracefully disconnected.")
         self.is_connected = False
 
+    def subscribe(self, topic):
+        self._log("info", f"Subscribing to command topic: {topic}")
+        self.client.subscribe(topic)
+
     def publish(self, topic, payload, retain=False, qos=0):
         if not self.is_connected:
             self._log("warning", f"Not connected. Cannot publish to {topic}.")
@@ -88,57 +97,48 @@ class MqttClient:
         except Exception as e:
             self._log("error", f"Failed to publish to {topic}: {e}")
 
-    def publish_discovery(self, component, sensor_type_slug, sensor_name, device_class=None, unit_of_measurement=None, icon=None, value_template=None, state_class=None):
+    def publish_discovery(self, component, slug, name, device_class=None, unit=None, icon=None, cmd_topic=None, val_template=None, state_class=None):
         if not self.device_info_dict:
             return
 
-        unique_id = f"{self.device_info_dict['identifiers'][0]}_{sensor_type_slug}"
+        unique_id = f"{self.device_info_dict['identifiers'][0]}_{slug}"
         config_topic = f"homeassistant/{component}/{unique_id}/config"
         
         payload = {
-            "name": sensor_name,
+            "name": name,
             "unique_id": unique_id,
             "device": self.device_info_dict,
             "availability_topic": self.availability_topic,
         }
-        if command_topic:
-            payload["command_topic"] = command_topic
-            # For buttons, the payload is often defined
-            payload["payload_press"] = "PRESS"
-
+        
         if component == 'sensor':
-            payload["state_topic"] = f"{self.base_topic}/sensor/{sensor_type_slug}"
-            payload["json_attributes_topic"] = f"{self.base_topic}/sensor/{sensor_type_slug}"
+            payload["state_topic"] = f"{self.base_topic}/sensor/{slug}"
+            payload["json_attributes_topic"] = f"{self.base_topic}/sensor/{slug}"
             payload["value_template"] = "{{ value_json.state }}"
         elif component == 'binary_sensor':
-            payload["state_topic"] = self.availability_topic
-            payload["payload_on"] = "online"
-            payload["payload_off"] = "offline"
+            payload["state_topic"] = f"{self.base_topic}/binary_sensor/{slug}"
+            payload["payload_on"] = "ON"
+            payload["payload_off"] = "OFF"
+        elif component == 'button':
+            payload["command_topic"] = cmd_topic
+            payload["payload_press"] = "PRESS"
         
         if device_class: payload["device_class"] = device_class
-        if unit_of_measurement: payload["unit_of_measurement"] = unit_of_measurement
+        if unit: payload["unit_of_measurement"] = unit
         if icon: payload["icon"] = icon
         if state_class: payload["state_class"] = state_class
 
         self.publish(config_topic, json.dumps(payload), retain=True)
 
-    def publish_state(self, sensor_type_slug, state, attributes=None):
+    def publish_state(self, component, slug, state, attributes=None):
         if not self.is_connected:
             return
             
-        topic = f"{self.base_topic}/sensor/{sensor_type_slug}"
-        payload = {"state": state}
-        if attributes:
-            payload.update(attributes)
-            
-        self.publish(topic, json.dumps(payload))
-    
-    def _on_message(self, client, userdata, msg):
-        """Internal message handler that calls the user-defined callback."""
-        if self.message_callback:
-            self.message_callback(msg.topic, msg.payload.decode('utf-8'))
-
-    def subscribe(self, topic):
-        """Subscribes the client to a specific topic."""
-        self._log("info", f"Subscribing to command topic: {topic}")
-        self.client.subscribe(topic)
+        topic = f"{self.base_topic}/{component}/{slug}"
+        if component == "sensor":
+            payload = {"state": state}
+            if attributes:
+                payload.update(attributes)
+            self.publish(topic, json.dumps(payload))
+        else: # For binary_sensor
+            self.publish(topic, state)

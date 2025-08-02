@@ -140,7 +140,7 @@ def update_server(alias):
     server_to_update['fan_curve'] = sorted(fan_curve, key=lambda p: p['temp'])
     
     save_servers_config(servers)
-    return redirect('../servers')
+    return redirect('../../servers')
 
 @app.route('/servers/delete/<alias>', methods=['POST'])
 def delete_server(alias):

@@ -104,8 +104,11 @@ class ServerWorker:
             
             temps = self.ipmi.parse_temperatures(raw_temp_data, r"Temp", r"Inlet Temp", r"Exhaust Temp")
             fans = self.ipmi.parse_fan_rpms(self.ipmi.retrieve_fan_rpms_raw())
-            power = self.ipmi.parse_power_consumption(self.ipmi.retrieve_power_sdr_raw())
-            psu_statuses = self.ipmi.get_psu_status()
+            
+            # Get all power-related data in one go
+            power_sdr_data = self.ipmi.retrieve_power_sdr_raw()
+            power = self.ipmi.parse_power_consumption(power_sdr_data)
+            psu_statuses = self.ipmi.get_power_status(power_sdr_data)
 
             hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
             

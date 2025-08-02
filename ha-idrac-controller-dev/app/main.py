@@ -85,12 +85,6 @@ class ServerWorker:
         self._log("error", "Failed to confirm MQTT connection after 10 seconds.")
         return False
 
-        if not self._initialize():
-
-
-            self._log("error", "Initialization failed. Stopping worker.")
-            return
-
     def run(self):
         if not self._initialize():
             self._log("error", "Initialization failed. Stopping worker.")
@@ -115,18 +109,14 @@ class ServerWorker:
 
             hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
             
-            # --- NEW FAN CONTROL LOGIC ---
             fan_mode = self.config.get('fan_mode', 'simple')
             target_fan_speed = "Dell Auto"
             
             if hottest_cpu is not None:
                 crit_thresh = self.config.get('critical_temp_threshold', self.global_opts['critical_temp_threshold'])
                 
-                # Always revert to Dell control if critical temperature is breached
                 if hottest_cpu >= crit_thresh:
                     self.ipmi.apply_dell_fan_control_profile()
-                
-                # Simple Mode Logic
                 elif fan_mode == 'simple':
                     low_thresh = self.config.get('low_temp_threshold', self.global_opts['low_temp_threshold'])
                     high_fan = self.config.get('high_temp_fan_speed_percent', self.global_opts['high_temp_fan_speed_percent'])
@@ -134,89 +124,35 @@ class ServerWorker:
                     if hottest_cpu >= low_thresh: target_fan_speed = high_fan
                     else: target_fan_speed = base_fan
                     self.ipmi.apply_user_fan_control_profile(target_fan_speed)
-
-                # Target Temperature Mode Logic (Proportional Controller)
                 elif fan_mode == 'target':
                     target_temp = self.config.get('target_temp', 55)
-                    # Proportional gain: How aggressively to react. A value of 3-5 is usually a good start.
                     gain = 4 
                     error = hottest_cpu - target_temp
-                    # Start with a base speed and add the proportional component.
-                    # Clamp the speed between a safe minimum (15%) and maximum (90%).
                     speed = min(90, max(15, 20 + int(error * gain)))
                     target_fan_speed = speed
                     self.ipmi.apply_user_fan_control_profile(target_fan_speed)
-
-                # Fan Curve Mode Logic
                 elif fan_mode == 'curve':
                     fan_curve = self.config.get('fan_curve', [])
                     if len(fan_curve) >= 2:
-                        # Find the two points the current temperature is between
-                        lower_point = fan_curve[0]
-                        upper_point = fan_curve[-1]
+                        lower_point = fan_curve[0]; upper_point = fan_curve[-1]
                         for i in range(len(fan_curve) - 1):
                             if fan_curve[i]['temp'] <= hottest_cpu < fan_curve[i+1]['temp']:
-                                lower_point = fan_curve[i]
-                                upper_point = fan_curve[i+1]
+                                lower_point, upper_point = fan_curve[i], fan_curve[i+1]
                                 break
                         
-                        # Handle edge cases (below the first point or above the last)
-                        if hottest_cpu < lower_point['temp']:
-                            speed = lower_point['speed']
-                        elif hottest_cpu >= upper_point['temp']:
-                            speed = upper_point['speed']
+                        if hottest_cpu < lower_point['temp']: speed = lower_point['speed']
+                        elif hottest_cpu >= upper_point['temp']: speed = upper_point['speed']
                         else:
-                            # Linear interpolation
                             temp_range = upper_point['temp'] - lower_point['temp']
                             speed_range = upper_point['speed'] - lower_point['speed']
-                            temp_delta = hottest_cpu - lower_point['temp']
-                            speed = lower_point['speed'] + (temp_delta / temp_range) * speed_range
+                            speed = lower_point['speed'] + ((hottest_cpu - lower_point['temp']) / temp_range * speed_range)
                         
                         target_fan_speed = int(speed)
                         self.ipmi.apply_user_fan_control_profile(target_fan_speed)
                     else:
-                        self._log("warning", "Fan curve selected but not configured with at least 2 points. Using Dell auto.")
                         self.ipmi.apply_dell_fan_control_profile()
             else:
-                 self.ipmi.apply_dell_fan_control_profile() # Safety default
-
-            # --- Status and MQTT Publishing (no changes needed below this line in this method) ---
-            status_data = {
-                "hottest_cpu_temp": hottest_cpu, "inlet_temp": temps.get('inlet_temp'),
-                "exhaust_temp": temps.get('exhaust_temp'), "power": power,
-                "target_fan_speed": None if isinstance(target_fan_speed, str) else target_fan_speed,
-                "cpus": temps.get('cpu_temps', []), "fans": fans, "psus": psu_statuses
-            }
-            # ... (rest of the method is unchanged)
-            
-        while self.running and running:
-            start_time = time.time()
-            
-            raw_temp_data = self.ipmi.retrieve_temperatures_raw()
-            if raw_temp_data is None:
-                self.mqtt.publish(self.mqtt.availability_topic, "offline", retain=True)
-                self._log("warning", "Failed to retrieve data from iDRAC. Server appears to be offline.")
-                time.sleep(60)
-                continue
-
-            self.mqtt.publish(self.mqtt.availability_topic, "online", retain=True)
-            
-            temps = self.ipmi.parse_temperatures(raw_temp_data, r"Temp", r"Inlet Temp", r"Exhaust Temp")
-            fans = self.ipmi.parse_fan_rpms(self.ipmi.retrieve_fan_rpms_raw())
-            power = self.ipmi.parse_power_consumption(self.ipmi.retrieve_power_sdr_raw())
-            psu_statuses = self.ipmi.get_psu_status()
-
-            hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
-            target_fan_speed = "Dell Auto"
-            if hottest_cpu is not None:
-                low_thresh = self.config.get('low_temp_threshold', self.global_opts['low_temp_threshold'])
-                crit_thresh = self.config.get('critical_temp_threshold', self.global_opts['critical_temp_threshold'])
-                high_fan = self.config.get('high_temp_fan_speed_percent', self.global_opts['high_temp_fan_speed_percent'])
-                base_fan = self.config.get('base_fan_speed_percent', self.global_opts['base_fan_speed_percent'])
-
-                if hottest_cpu >= crit_thresh: self.ipmi.apply_dell_fan_control_profile()
-                elif hottest_cpu >= low_thresh: target_fan_speed = high_fan; self.ipmi.apply_user_fan_control_profile(target_fan_speed)
-                else: target_fan_speed = base_fan; self.ipmi.apply_user_fan_control_profile(target_fan_speed)
+                 self.ipmi.apply_dell_fan_control_profile()
 
             status_data = {
                 "hottest_cpu_temp": hottest_cpu, "inlet_temp": temps.get('inlet_temp'),
@@ -244,7 +180,7 @@ class ServerWorker:
         self.cleanup()
 
     def _publish_mqtt_data(self, status):
-        sensors_to_publish = {
+        sensors = {
             "shutdown_button": {"component": "button", "name": "Shutdown Server", "device_class": "restart", "icon": "mdi:server-off"},
             "hottest_cpu_temp": {"component": "sensor", "device_class": "temperature", "unit": "°C"},
             "inlet_temp": {"component": "sensor", "device_class": "temperature", "unit": "°C"},
@@ -252,11 +188,11 @@ class ServerWorker:
             "power": {"component": "sensor", "device_class": "power", "unit": "W", "state_class": "measurement", "icon": "mdi:flash"},
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
         }
-        for i, _ in enumerate(status.get('cpus', [])): sensors_to_publish[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C"}
-        for fan in status.get('fans', []): sensors_to_publish[f"fan_{re.sub(r'[^a-zA-Z0-9_]+', '', fan['name']).lower()}_rpm"] = {"component": "sensor", "name": f"{fan['name']} RPM", "unit": "RPM", "icon": "mdi:fan"}
-        for psu in status.get('psus', []): sensors_to_publish[f"psu_{re.sub(r'[^a-zA-Z0-9_]+', '', psu['name']).lower()}"] = {"component": "binary_sensor", "name": psu['name'], "device_class": "problem"}
+        for i, _ in enumerate(status.get('cpus', [])): sensors[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C"}
+        for fan in status.get('fans', []): sensors[f"fan_{re.sub(r'[^a-zA-Z0-9_]+', '', fan['name']).lower()}_rpm"] = {"component": "sensor", "name": f"{fan['name']} RPM", "unit": "RPM", "icon": "mdi:fan"}
+        for psu in status.get('psus', []): sensors[f"psu_{re.sub(r'[^a-zA-Z0-9_]+', '', psu['name']).lower()}"] = {"component": "binary_sensor", "name": psu['name'], "device_class": "problem"}
 
-        for slug, desc in sensors_to_publish.items():
+        for slug, desc in sensors.items():
             if slug not in self.discovered_sensors:
                 cmd_topic = f"{self.mqtt.base_topic}/command/shutdown" if desc['component'] == 'button' else None
                 self.mqtt.publish_discovery(desc['component'], slug, desc.get('name', slug.replace("_", " ").title()), desc.get('device_class'), desc.get('unit'), desc.get('icon'), cmd_topic, None, desc.get('state_class'))
@@ -326,5 +262,5 @@ if __name__ == "__main__":
         graceful_shutdown(None, None)
 
     print("[MAIN] Waiting for all server threads to terminate...", flush=True)
-    for thread in threads: thread.join(timeout=1) # Give threads a moment to exit
+    for thread in threads: thread.join(timeout=1)
     print("[MAIN] ===== HA iDRAC Controller Stopped =====", flush=True)

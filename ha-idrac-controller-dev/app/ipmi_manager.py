@@ -182,53 +182,43 @@ class IPMIManager:
         return None
 
     def get_power_status(self, sdr_data):
-        """Parses the full SDR list to get comprehensive status for PSUs."""
         if not sdr_data:
             self._log("warning", "SDR data is empty for power status parsing.")
             return []
 
-        psu_data = {}
+        psus = {}
         # Regex for Presence, Voltage, and Faults
-        presence_regex = re.compile(r"^Status\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*\|\s*10\.(\d)\s*\|\s*Presence detected")
-        voltage_regex = re.compile(r"^Voltage (\d)\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*\|\s*10\.\d\s*\|\s*([\d\.]+)\s*Volts")
-        fail_regex = re.compile(r"^PS(\d) PG Fail\s*\|\s*[\da-fA-F]+h\s*\|\s*(ok|nr)")
+        presence_regex = re.compile(r"Status\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*\|\s*10\.(\d)\s*\|\s*Presence detected")
+        voltage_regex = re.compile(r"Voltage (\d)\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*.*?\|\s*([\d\.]+)\s*Volts")
+        fail_regex = re.compile(r"PS(\d) PG Fail\s*\|\s*[\da-fA-F]+h\s*\|\s*(ok|nr)")
 
         for line in sdr_data.splitlines():
-            # Check for presence
-            match = presence_regex.search(line)
-            if match:
-                psu_index = match.group(1)
-                psu_data.setdefault(psu_index, {"name": f"PSU{psu_index}", "present": True, "voltage_ok": False, "fault": False})
+            # Use a temporary match variable
+            m = presence_regex.search(line)
+            if m:
+                psu_index = m.group(1)
+                psus.setdefault(psu_index, {})["present"] = True
                 continue
             
-            # Check for voltage
-            match = voltage_regex.search(line)
-            if match:
-                psu_index, voltage_str = match.groups()
-                psu_data.setdefault(psu_index, {"name": f"PSU{psu_index}", "present": False, "fault": False})
-                try:
-                    # Consider voltage OK if it's above a threshold (e.g., 100V)
-                    psu_data[psu_index]["voltage_ok"] = float(voltage_str) > 100
-                except ValueError:
-                    psu_data[psu_index]["voltage_ok"] = False
+            m = voltage_regex.search(line)
+            if m:
+                psu_index, voltage_str = m.groups()
+                psus.setdefault(psu_index, {})["voltage"] = float(voltage_str) if voltage_str else 0
                 continue
-
-            # Check for faults
-            match = fail_regex.search(line)
-            if match:
-                psu_index, status = match.groups()
-                psu_data.setdefault(psu_index, {"name": f"PSU{psu_index}", "present": False, "voltage_ok": False})
-                # "ok" or "nr" on a PG Fail sensor means NO fault. Any other state is a fault.
-                psu_data[psu_index]["fault"] = status not in ['ok', 'nr']
+            
+            m = fail_regex.search(line)
+            if m:
+                psu_index, status = m.groups()
+                psus.setdefault(psu_index, {})["fault"] = status not in ['ok', 'nr']
                 continue
 
         # Consolidate results into a final status list
         final_status = []
-        for index, data in sorted(psu_data.items()):
-            # A PSU is considered "OK" only if it is present, has good voltage, and has no fault.
-            is_ok = data["present"] and data["voltage_ok"] and not data["fault"]
-            final_status.append({"name": data["name"], "ok": is_ok})
-            self._log("debug", f"PSU Status for {data['name']}: Present={data['present']}, VoltageOK={data['voltage_ok']}, Fault={data['fault']} -> Final OK={is_ok}")
+        for index, data in sorted(psus.items()):
+            name = f"PSU{index}"
+            is_ok = data.get("present", False) and data.get("voltage", 0) > 100 and not data.get("fault", True)
+            final_status.append({"name": name, "ok": is_ok})
+            self._log("debug", f"PSU Status for {name}: Present={data.get('present', False)}, Voltage={data.get('voltage', 0)}, Fault={data.get('fault', True)} -> Final OK={is_ok}")
         
         return final_status
 

@@ -126,7 +126,6 @@ class IPMIManager:
     def parse_temperatures(self, sdr_data, cpu_pattern_str, inlet_pattern_str, exhaust_pattern_str):
         temps = {"cpu_temps": [], "inlet_temp": None, "exhaust_temp": None}
         if not sdr_data:
-            self._log("warning", "SDR data empty for temp parsing.")
             return temps
 
         temp_line_regex = re.compile(r"^(.*?)\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*.*?\|\s*([-+]?\d*\.?\d+)\s*degrees C", re.IGNORECASE)
@@ -134,21 +133,14 @@ class IPMIManager:
         for line in sdr_data.splitlines():
             match = temp_line_regex.match(line.strip())
             if not match: continue
-            
             sensor_name, temp_val_str = match.groups()
-            sensor_name = sensor_name.strip()
             try:
                 temp_value = int(float(temp_val_str))
+                if re.search(inlet_pattern_str, sensor_name, re.IGNORECASE): temps["inlet_temp"] = temp_value
+                elif re.search(exhaust_pattern_str, sensor_name, re.IGNORECASE): temps["exhaust_temp"] = temp_value
+                elif re.search(cpu_pattern_str, sensor_name, re.IGNORECASE): temps["cpu_temps"].append(temp_value)
             except ValueError:
                 continue
-
-            if re.search(inlet_pattern_str, sensor_name, re.IGNORECASE):
-                temps["inlet_temp"] = temp_value
-            elif re.search(exhaust_pattern_str, sensor_name, re.IGNORECASE):
-                temps["exhaust_temp"] = temp_value
-            elif re.search(cpu_pattern_str, sensor_name, re.IGNORECASE):
-                temps["cpu_temps"].append(temp_value)
-                
         return temps
 
     def retrieve_fan_rpms_raw(self):
@@ -164,7 +156,6 @@ class IPMIManager:
         for line in sdr_data.splitlines():
             match = fan_line_regex.match(line.strip())
             if not match: continue
-            
             fan_name, rpm_str = match.groups()
             try:
                 fans.append({"name": fan_name.strip(), "rpm": int(float(rpm_str))})
@@ -174,49 +165,72 @@ class IPMIManager:
 
     def retrieve_power_sdr_raw(self):
         self._log("debug", "Retrieving raw power SDR data...")
-        return self._run_ipmi_command(["sdr", "type", "current"], is_raw_command=False, timeout=10)
+        return self._run_ipmi_command(["sdr", "elist"], is_raw_command=False, timeout=20)
 
     def parse_power_consumption(self, sdr_data):
         if not sdr_data:
-            self._log("warning", "SDR data is empty for power consumption parsing.")
             return None
         
         power_line_regex = re.compile(r"^(Pwr Consumption.*?)\s*\|.*?\s*([\d\.]+)\s*Watts", re.IGNORECASE)
-        
         for line in sdr_data.splitlines():
             match = power_line_regex.search(line)
             if match:
                 try:
-                    power_watts = int(float(match.group(2)))
-                    self._log("debug", f"MATCHED POWER: '{match.group(1).strip()}' as {power_watts} Watts")
-                    return power_watts
+                    return int(float(match.group(2)))
                 except (ValueError, IndexError):
                     continue
-        
-        self._log("warning", "Power Consumption sensor (Watts) not found in SDR data.")
         return None
 
-    def get_psu_status(self):
-        """Retrieves the status of all Power Supply Units."""
-        self._log("debug", "Retrieving PSU status from SDR...")
-        sdr_data = self._run_ipmi_command(["sdr", "elist"], is_raw_command=False)
-        psu_statuses = []
+    def get_power_status(self, sdr_data):
+        """Parses the full SDR list to get comprehensive status for PSUs."""
         if not sdr_data:
-            return psu_statuses
+            self._log("warning", "SDR data is empty for power status parsing.")
+            return []
 
-        # This regex is now more flexible. It looks for lines containing "PS" and "Status" OR "Fail".
-        psu_regex = re.compile(r"^(PS\d+\s(?:Status|PG\sFail))\s*\|.*?\|\s*(ok|nr)")
+        psu_data = {}
+        # Regex for Presence, Voltage, and Faults
+        presence_regex = re.compile(r"^Status\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*\|\s*10\.(\d)\s*\|\s*Presence detected")
+        voltage_regex = re.compile(r"^Voltage (\d)\s*\|\s*[\da-fA-F]+h\s*\|\s*ok\s*\|\s*10\.\d\s*\|\s*([\d\.]+)\s*Volts")
+        fail_regex = re.compile(r"^PS(\d) PG Fail\s*\|\s*[\da-fA-F]+h\s*\|\s*(ok|nr)")
 
         for line in sdr_data.splitlines():
-            match = psu_regex.search(line)
+            # Check for presence
+            match = presence_regex.search(line)
             if match:
-                psu_name = match.group(1).strip()
-                # Status 'ok' means the PSU is healthy (e.g., "State Deasserted" for a PG Fail sensor).
-                status_ok = match.group(2) in ['ok', 'nr']
-                psu_statuses.append({"name": psu_name, "ok": status_ok})
-                self._log("debug", f"Found PSU: {psu_name}, Status OK: {status_ok}")
+                psu_index = match.group(1)
+                psu_data.setdefault(psu_index, {"name": f"PSU{psu_index}", "present": True, "voltage_ok": False, "fault": False})
+                continue
+            
+            # Check for voltage
+            match = voltage_regex.search(line)
+            if match:
+                psu_index, voltage_str = match.groups()
+                psu_data.setdefault(psu_index, {"name": f"PSU{psu_index}", "present": False, "fault": False})
+                try:
+                    # Consider voltage OK if it's above a threshold (e.g., 100V)
+                    psu_data[psu_index]["voltage_ok"] = float(voltage_str) > 100
+                except ValueError:
+                    psu_data[psu_index]["voltage_ok"] = False
+                continue
+
+            # Check for faults
+            match = fail_regex.search(line)
+            if match:
+                psu_index, status = match.groups()
+                psu_data.setdefault(psu_index, {"name": f"PSU{psu_index}", "present": False, "voltage_ok": False})
+                # "ok" or "nr" on a PG Fail sensor means NO fault. Any other state is a fault.
+                psu_data[psu_index]["fault"] = status not in ['ok', 'nr']
+                continue
+
+        # Consolidate results into a final status list
+        final_status = []
+        for index, data in sorted(psu_data.items()):
+            # A PSU is considered "OK" only if it is present, has good voltage, and has no fault.
+            is_ok = data["present"] and data["voltage_ok"] and not data["fault"]
+            final_status.append({"name": data["name"], "ok": is_ok})
+            self._log("debug", f"PSU Status for {data['name']}: Present={data['present']}, VoltageOK={data['voltage_ok']}, Fault={data['fault']} -> Final OK={is_ok}")
         
-        return psu_statuses
+        return final_status
 
     def chassis_shutdown(self):
         """Sends a graceful ACPI shutdown command to the server."""

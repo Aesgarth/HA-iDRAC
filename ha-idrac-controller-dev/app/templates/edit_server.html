@@ -8,31 +8,16 @@
 <body>
     <div class="main-container">
         <h1>Edit Server: {{ server.alias }}</h1>
-        <p><a href="../../servers">&laquo; Back to Server List</a></p>
+        <p><a href="../servers">&laquo; Back to Server List</a></p>
 
         <div class="container">
             <form action="../update/{{ server.alias }}" method="POST">
                 
                 <div class="form-grid">
-                    <div class="form-group">
-                        <label for="idrac_ip">iDRAC IP Address</label>
-                        <input type="text" id="idrac_ip" name="idrac_ip" value="{{ server.idrac_ip }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="idrac_username">Username</label>
-                        <input type="text" id="idrac_username" name="idrac_username" value="{{ server.idrac_username }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="idrac_password">New Password</label>
-                        <input type="password" id="idrac_password" name="idrac_password" placeholder="Leave blank to keep existing">
-                    </div>
-                    <div class="form-group">
-                        <label for="enabled">Enabled</label>
-                        <select id="enabled" name="enabled">
-                            <option value="true" {% if server.enabled %}selected{% endif %}>Yes</option>
-                            <option value="false" {% if not server.enabled %}selected{% endif %}>No</option>
-                        </select>
-                    </div>
+                    <div class="form-group"><label for="idrac_ip">iDRAC IP Address</label><input type="text" id="idrac_ip" name="idrac_ip" value="{{ server.idrac_ip }}" required></div>
+                    <div class="form-group"><label for="idrac_username">Username</label><input type="text" id="idrac_username" name="idrac_username" value="{{ server.idrac_username }}" required></div>
+                    <div class="form-group"><label for="idrac_password">New Password</label><input type="password" id="idrac_password" name="idrac_password" placeholder="Leave blank to keep existing"></div>
+                    <div class="form-group"><label for="enabled">Enabled</label><select id="enabled" name="enabled"><option value="true" {% if server.enabled %}selected{% endif %}>Yes</option><option value="false" {% if not server.enabled %}selected{% endif %}>No</option></select></div>
                 </div>
 
                 <hr>
@@ -42,27 +27,42 @@
                     <select id="fan_mode" name="fan_mode" onchange="updateFanMode()">
                         <option value="simple" {% if server.fan_mode == 'simple' %}selected{% endif %}>Simple Thresholds</option>
                         <option value="curve" {% if server.fan_mode == 'curve' %}selected{% endif %}>Multi-Point Curve</option>
-                        <option value="target" {% if server.fan_mode == 'target' %}selected{% endif %}>Target Temperature</option>
+                        <option value="target" {% if server.fan_mode == 'target' %}selected{% endif %}>Target Temperature (PID)</option>
                     </select>
                 </div>
 
                 <div id="simple-mode" class="fan-mode-section">
                     <h3>Simple Thresholds</h3>
                     <div class="form-grid">
-                        <div class="form-group"><label for="base_fan_speed_percent">Base Fan Speed (%)</label><input type="number" name="base_fan_speed_percent" value="{{ server.base_fan_speed_percent }}" min="0" max="100"></div>
-                        <div class="form-group"><label for="low_temp_threshold">Low Temp Threshold (°C)</label><input type="number" name="low_temp_threshold" value="{{ server.low_temp_threshold }}" min="0" max="100"></div>
-                        <div class="form-group"><label for="high_temp_fan_speed_percent">High Temp Fan Speed (%)</label><input type="number" name="high_temp_fan_speed_percent" value="{{ server.high_temp_fan_speed_percent }}" min="0" max="100"></div>
-                        <div class="form-group"><label for="critical_temp_threshold">Critical Temp Threshold (°C)</label><input type="number" name="critical_temp_threshold" value="{{ server.critical_temp_threshold }}" min="0" max="100"></div>
+                        <div class="form-group"><label>Base Fan Speed (%)</label><input type="number" name="base_fan_speed_percent" value="{{ server.base_fan_speed_percent }}" min="0" max="100"></div>
+                        <div class="form-group"><label>Low Temp Threshold (°C)</label><input type="number" name="low_temp_threshold" value="{{ server.low_temp_threshold }}" min="0" max="100"></div>
+                        <div class="form-group"><label>High Temp Fan Speed (%)</label><input type="number" name="high_temp_fan_speed_percent" value="{{ server.high_temp_fan_speed_percent }}" min="0" max="100"></div>
+                        <div class="form-group"><label>Critical Temp Threshold (°C)</label><input type="number" name="critical_temp_threshold" value="{{ server.critical_temp_threshold }}" min="0" max="100"></div>
                     </div>
                 </div>
 
                 <div id="target-mode" class="fan-mode-section">
-                    <h3>Target Temperature</h3>
-                    <div class="form-grid-single">
+                    <h3>Target Temperature (PID)</h3>
+                    <div class="form-grid">
                         <div class="form-group">
-                            <label for="target_temp">Target CPU Temperature (°C)</label>
-                            <input type="number" name="target_temp" value="{{ server.target_temp or 55 }}" min="30" max="80">
-                            <small>The controller will adjust fan speed to try and maintain this temperature.</small>
+                            <label>Target CPU Temp (°C)</label>
+                            <input type="number" name="target_temp" value="{{ server.pid_config.target_temp or 55 }}">
+                            <small>The controller will try to maintain this temperature.</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Proportional Gain (Kp)</label>
+                            <input type="number" name="pid_kp" value="{{ server.pid_config.kp or 4.0 }}" step="0.1">
+                            <small>How strongly it reacts to current error. (e.g., 4.0)</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Integral Gain (Ki)</label>
+                            <input type="number" name="pid_ki" value="{{ server.pid_config.ki or 0.2 }}" step="0.01">
+                            <small>How much to factor in past errors. (e.g., 0.2)</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Derivative Gain (Kd)</label>
+                            <input type="number" name="pid_kd" value="{{ server.pid_config.kd or 0.1 }}" step="0.01">
+                            <small>How much to predict future error. (e.g., 0.1)</small>
                         </div>
                     </div>
                 </div>
@@ -71,9 +71,9 @@
                     <h3>Multi-Point Fan Curve</h3>
                     <div id="fan-curve-points">
                         {% for point in server.fan_curve %}
-                        <div class="fan-point" id="point-{{ loop.index0 }}">
-                            <label>Temp (&ge; °C):</label><input type="number" name="curve_temp_{{ loop.index0 }}" value="{{ point.temp }}" min="0" max="100">
-                            <label>Speed (%):</label><input type="number" name="curve_speed_{{ loop.index0 }}" value="{{ point.speed }}" min="0" max="100">
+                        <div class="fan-point">
+                            <label>Temp (&ge; °C):</label><input type="number" name="curve_temp_{{ loop.index0 }}" value="{{ point.temp }}">
+                            <label>Speed (%):</label><input type="number" name="curve_speed_{{ loop.index0 }}" value="{{ point.speed }}">
                             <button type="button" class="destructive" onclick="removePoint(this)">Remove</button>
                         </div>
                         {% endfor %}
@@ -82,33 +82,32 @@
                 </div>
 
                 <hr>
-                <div class="form-actions">
-                    <button type="submit">Save Changes</button>
-                </div>
+                <div class="form-actions"><button type="submit">Save Changes</button></div>
             </form>
         </div>
     </div>
-
+    
     <script>
         function updateFanMode() {
             const mode = document.getElementById('fan_mode').value;
-            document.getElementById('simple-mode').style.display = mode === 'simple' ? 'block' : 'none';
-            document.getElementById('target-mode').style.display = mode === 'target' ? 'block' : 'none';
-            document.getElementById('curve-mode').style.display = mode === 'curve' ? 'block' : 'none';
+            document.getElementById('simple-mode').style.display = (mode === 'simple') ? 'block' : 'none';
+            document.getElementById('target-mode').style.display = (mode === 'target') ? 'block' : 'none';
+            document.getElementById('curve-mode').style.display = (mode === 'curve') ? 'block' : 'none';
         }
 
-        let pointCounter = {{ server.fan_curve|length }};
+        let pointCounter = parseInt('{{ server.fan_curve|length }}', 10);
+        
         function addPoint() {
             const container = document.getElementById('fan-curve-points');
-            const newPointDiv = document.createElement('div');
-            newPointDiv.classList.add('fan-point');
-            newPointDiv.id = `point-${pointCounter}`;
-            newPointDiv.innerHTML = `
-                <label>Temp (&ge; °C):</label><input type="number" name="curve_temp_${pointCounter}" value="" min="0" max="100">
-                <label>Speed (%):</label><input type="number" name="curve_speed_${pointCounter}" value="" min="0" max="100">
-                <button type="button" class="destructive" onclick="removePoint(this)">Remove</button>
-            `;
-            container.appendChild(newPointDiv);
+            const newPointHtml = `
+                <div class="fan-point">
+                    <label>Temp (&ge; °C):</label>
+                    <input type="number" name="curve_temp_${pointCounter}" value="">
+                    <label>Speed (%):</label>
+                    <input type="number" name="curve_speed_${pointCounter}" value="">
+                    <button type="button" class="destructive" onclick="removePoint(this)">Remove</button>
+                </div>`;
+            container.insertAdjacentHTML('beforeend', newPointHtml);
             pointCounter++;
         }
 
@@ -116,21 +115,49 @@
             button.parentElement.remove();
         }
 
-        // Initial call to set the correct view
+        // Run on page load to set the initial correct view
         document.addEventListener('DOMContentLoaded', updateFanMode);
     </script>
+
     <style>
-        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; }
-        .form-grid-single { display: grid; grid-template-columns: 1fr; gap: 1.5em; max-width: 400px; }
-        .form-group { display: flex; flex-direction: column; }
-        .form-group label { margin-bottom: 0.5em; }
-        .form-group input, .form-group select { max-width: none; }
-        .form-actions { grid-column: span 2; margin-top: 1em; }
-        .fan-mode-section { margin-top: 1.5em; }
-        .fan-point { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-        .fan-point label { white-space: nowrap; }
-        .fan-point input { width: 80px; }
-        hr { border: 1px solid var(--divider-color); margin: 2em 0; }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5em;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            margin-bottom: 0.5em;
+        }
+        .form-group input, .form-group select {
+            max-width: none;
+        }
+        .form-actions {
+            grid-column: span 2;
+            margin-top: 1em;
+        }
+        .fan-mode-section {
+            margin-top: 1.5em;
+        }
+        .fan-point {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .fan-point label {
+            white-space: nowrap;
+        }
+        .fan-point input {
+            width: 80px;
+        }
+        hr {
+            border: 1px solid var(--divider-color);
+            margin: 2em 0;
+        }
     </style>
 </body>
 </html>

@@ -100,7 +100,7 @@ def update_server(alias):
     server_to_update = next((s for s in servers if s['alias'] == alias), None)
     if not server_to_update:
         flash(f"Server '{alias}' not found.", "error")
-        return redirect('../servers')
+        return redirect('../../servers')
 
     # Update base details
     server_to_update['idrac_ip'] = request.form.get('idrac_ip')
@@ -110,7 +110,7 @@ def update_server(alias):
         server_to_update['idrac_password'] = new_password
     server_to_update['enabled'] = request.form.get('enabled') == 'true'
     
-    # Update fan control settings
+    # Update fan control mode
     server_to_update['fan_mode'] = request.form.get('fan_mode')
     
     # Simple Mode settings
@@ -119,24 +119,25 @@ def update_server(alias):
     server_to_update['high_temp_fan_speed_percent'] = int(request.form.get('high_temp_fan_speed_percent'))
     server_to_update['critical_temp_threshold'] = int(request.form.get('critical_temp_threshold'))
     
-    # Target Mode settings
-    server_to_update['target_temp'] = int(request.form.get('target_temp'))
+    # PID / Target Mode settings
+    server_to_update['pid_config'] = {
+        "target_temp": int(request.form.get('target_temp')),
+        "kp": float(request.form.get('pid_kp')),
+        "ki": float(request.form.get('pid_ki')),
+        "kd": float(request.form.get('pid_kd'))
+    }
     
     # Curve Mode settings
     fan_curve = []
     i = 0
     while True:
-        temp_key = f'curve_temp_{i}'
-        speed_key = f'curve_speed_{i}'
-        if temp_key in request.form and speed_key in request.form:
-            temp = request.form[temp_key]
-            speed = request.form[speed_key]
-            if temp and speed:
-                fan_curve.append({'temp': int(temp), 'speed': int(speed)})
+        temp = request.form.get(f'curve_temp_{i}')
+        speed = request.form.get(f'curve_speed_{i}')
+        if temp and speed:
+            fan_curve.append({'temp': int(temp), 'speed': int(speed)})
             i += 1
         else:
             break
-    # Sort the curve by temperature
     server_to_update['fan_curve'] = sorted(fan_curve, key=lambda p: p['temp'])
     
     save_servers_config(servers)

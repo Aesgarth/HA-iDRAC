@@ -121,7 +121,9 @@ class ServerWorker:
                     else: target_fan_speed = self.config.get('base_fan_speed_percent', 20)
                     self.ipmi.apply_user_fan_control_profile(target_fan_speed)
                 elif fan_mode == 'target':
-                    speed = self.pid.update(hottest_cpu)
+                    # Get the base fan speed to use with the PID controller
+                    base_fan = self.config.get('base_fan_speed_percent', 20)
+                    speed = self.pid.update(hottest_cpu, base_fan) # Pass the base speed
                     if speed is not None:
                         target_fan_speed = speed
                         self.ipmi.apply_user_fan_control_profile(target_fan_speed)
@@ -151,6 +153,7 @@ class ServerWorker:
             
             self._publish_mqtt_data(status_data)
             time.sleep(max(0.1, self.global_opts["check_interval_seconds"] - (time.time() - start_time)))
+
 
     def _publish_mqtt_data(self, status):
         sensors = {

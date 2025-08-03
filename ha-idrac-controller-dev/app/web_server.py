@@ -86,10 +86,10 @@ def edit_server_form(alias):
     servers = load_servers_config()
     server_to_edit = next((s for s in servers if s['alias'] == alias), None)
     if server_to_edit:
-        # Ensure default keys exist for the template
         server_to_edit.setdefault('fan_mode', 'simple')
         server_to_edit.setdefault('fan_curve', [])
-        server_to_edit.setdefault('target_temp', 55)
+        server_to_edit.setdefault('pid_config', {}) # This is the fix
+        server_to_edit.setdefault('target_temp', 55) # Keep this for backward compatibility
         return render_template('edit_server.html', server=server_to_edit)
     flash(f"Server '{alias}' not found.", "error")
     return redirect('servers')

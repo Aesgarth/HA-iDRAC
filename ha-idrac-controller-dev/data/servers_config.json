@@ -1,12 +1,15 @@
 [
     {
-      "alias": "R720-DevServer",
+      "alias": "T430",
       "idrac_ip": "YOUR_IDRAC_IP_HERE",
       "idrac_username": "YOUR_IDRAC_USERNAME_HERE",
-      "idrac_encrypted_password": "YOUR_IDRAC_PASSWORD_HERE", 
+      "idrac_password": "YOUR_IDRAC_PASSWORD_HERE",
       "enabled": true,
-      "temperature_unit": "C", 
-      "low_temp_threshold": 42,
-      "critical_temp_threshold": 62
+      "fan_control_enabled": true,
+      "fan_mode": "simple",
+      "base_fan_speed_percent": 20,
+      "low_temp_threshold": 45,
+      "high_temp_fan_speed_percent": 50,
+      "critical_temp_threshold": 65
     }
   ]

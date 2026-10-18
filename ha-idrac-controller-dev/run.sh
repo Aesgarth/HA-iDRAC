@@ -5,10 +5,8 @@ echo "[RUN.SH] >>> Add-on execution started at $(date)"
 #IDRAC_IP_DEFAULT=""
 #IDRAC_USERNAME_DEFAULT="root"
 #IDRAC_PASSWORD_DEFAULT=""
-MASTER_ENCRYPTION_KEY_DEFAULT="" 
 CHECK_INTERVAL_SECONDS_DEFAULT=60
 LOG_LEVEL_DEFAULT="info"
-TEMPERATURE_UNIT_DEFAULT="C"
 BASE_FAN_SPEED_PERCENT_DEFAULT=20
 LOW_TEMP_THRESHOLD_DEFAULT=45
 HIGH_TEMP_FAN_SPEED_PERCENT_DEFAULT=50
@@ -21,14 +19,12 @@ MQTT_PASSWORD_DEFAULT=""
 # Read configuration from /data/options.json if it exists
 if [ -f /data/options.json ]; then
     echo "[RUN.SH] Reading configuration from /data/options.json"
-    export MASTER_ENCRYPTION_KEY=$(jq -r '.master_encryption_key // empty' /data/options.json)
     #export IDRAC_IP=$(jq -r '.idrac_ip // empty' /data/options.json)
     #export IDRAC_USERNAME=$(jq -r '.idrac_username // "'"$IDRAC_USERNAME_DEFAULT"'"' /data/options.json)
     #export IDRAC_PASSWORD=$(jq -r '.idrac_password // empty' /data/options.json)
     export CHECK_INTERVAL_SECONDS=$(jq -r '.check_interval_seconds // "'"$CHECK_INTERVAL_SECONDS_DEFAULT"'"' /data/options.json)
     export LOG_LEVEL=$(jq -r '.log_level // "'"$LOG_LEVEL_DEFAULT"'"' /data/options.json)
 
-    export TEMPERATURE_UNIT=$(jq -r '.temperature_unit // "'"$TEMPERATURE_UNIT_DEFAULT"'"' /data/options.json)
     export BASE_FAN_SPEED_PERCENT=$(jq -r '.base_fan_speed_percent // "'"$BASE_FAN_SPEED_PERCENT_DEFAULT"'"' /data/options.json)
     export LOW_TEMP_THRESHOLD=$(jq -r '.low_temp_threshold // "'"$LOW_TEMP_THRESHOLD_DEFAULT"'"' /data/options.json)
     export HIGH_TEMP_FAN_SPEED_PERCENT=$(jq -r '.high_temp_fan_speed_percent // "'"$HIGH_TEMP_FAN_SPEED_PERCENT_DEFAULT"'"' /data/options.json)
@@ -45,7 +41,6 @@ else
     export IDRAC_PASSWORD="$IDRAC_PASSWORD_DEFAULT"
     export CHECK_INTERVAL_SECONDS="$CHECK_INTERVAL_SECONDS_DEFAULT"
     export LOG_LEVEL="$LOG_LEVEL_DEFAULT"
-    export TEMPERATURE_UNIT="$TEMPERATURE_UNIT_DEFAULT"
     export BASE_FAN_SPEED_PERCENT="$BASE_FAN_SPEED_PERCENT_DEFAULT"
     export LOW_TEMP_THRESHOLD="$LOW_TEMP_THRESHOLD_DEFAULT"
     export HIGH_TEMP_FAN_SPEED_PERCENT="$HIGH_TEMP_FAN_SPEED_PERCENT_DEFAULT"
@@ -59,11 +54,10 @@ fi
 echo "[RUN.SH] Effective Configuration:"
 echo "[RUN.SH]   IDRAC_IP: ${IDRAC_IP}"
 echo "[RUN.SH]   LOG_LEVEL: ${LOG_LEVEL}"
-echo "[RUN.SH]   TEMP_UNIT: ${TEMPERATURE_UNIT}"
 echo "[RUN.SH]   BASE_FAN_SPEED: ${BASE_FAN_SPEED_PERCENT}%"
-echo "[RUN.SH]   LOW_TEMP_THRESH: ${LOW_TEMP_THRESHOLD}°${TEMPERATURE_UNIT}"
+echo "[RUN.SH]   LOW_TEMP_THRESH: ${LOW_TEMP_THRESHOLD}°C"
 echo "[RUN.SH]   HIGH_TEMP_FAN_SPEED: ${HIGH_TEMP_FAN_SPEED_PERCENT}%"
-echo "[RUN.SH]   CRITICAL_TEMP_THRESH: ${CRITICAL_TEMP_THRESHOLD}°${TEMPERATURE_UNIT}"
+echo "[RUN.SH]   CRITICAL_TEMP_THRESH: ${CRITICAL_TEMP_THRESHOLD}°C"
 echo "[RUN.SH]   MQTT_HOST: ${MQTT_HOST}:${MQTT_PORT}"
 # Avoid logging username/password directly unless debugging and you know it's safe
 # echo "[RUN.SH] MQTT_USERNAME: ${MQTT_USERNAME}"

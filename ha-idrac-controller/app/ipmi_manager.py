@@ -1,7 +1,7 @@
 # HA-iDRAC/ha-idrac-controller/app/ipmi_manager.py
 import subprocess
 import time
-import re 
+import re
 import os
 
 # --- Globals ---
@@ -9,7 +9,7 @@ _IDRAC_IP = ""
 _IDRAC_USER = ""
 _IDRAC_PASSWORD = ""
 _IPMI_BASE_ARGS = []
-_LOG_LEVEL = "info" 
+_LOG_LEVEL = "info"
 
 # --- Configuration ---
 def configure_ipmi(ip, user, password, conn_type="lanplus", log_level="info"):
@@ -22,8 +22,8 @@ def configure_ipmi(ip, user, password, conn_type="lanplus", log_level="info"):
     if conn_type.lower() == "local" or conn_type.lower() == "open":
         _IPMI_BASE_ARGS = ["-I", "open"]
         _log("info", f"IPMI configured for local access via 'open' interface.")
-    else: 
-        _IPMI_BASE_ARGS = ["-I", "lanplus", "-H", _IDRAC_IP, "-U", _IDRAC_USER, "-P", _IDRAC_PASSWORD]
+    else:
+        _IPMI_BASE_ARGS = ["-I", "lanplus", "-H", _IDRAC_IP, "-U", _IDRAC_USER, "-E"]
         _log("info", f"IPMI configured for lanplus access to host: {_IDRAC_IP}")
 
 # --- Logging ---
@@ -43,21 +43,25 @@ def _run_ipmi_command(args_list, is_raw_command=True, timeout=15):
         command_to_run = base_command + ["raw"] + args_list
     else:
         command_to_run = base_command + args_list
-    
+
     _log("debug", f"Executing IPMI command: {' '.join(command_to_run)}")
 
     try:
-        result = subprocess.run(command_to_run, capture_output=True, text=True, check=False, timeout=timeout)
-        
+        env = os.environ.copy()
+        if _IDRAC_PASSWORD:
+            env["IPMI_PASSWORD"] = _IDRAC_PASSWORD
+        result = subprocess.run(command_to_run, capture_output=True, text=True, check=False,
+                                timeout=timeout, env=env)
+
         if result.returncode != 0:
             _log("error", f"IPMI command failed: {' '.join(command_to_run)}")
             _log("error", f"STDOUT: {result.stdout.strip()}")
             _log("error", f"STDERR: {result.stderr.strip()}")
             return None
-        
+
         _log("debug", f"IPMI command STDOUT: {result.stdout.strip()}")
         return result.stdout.strip()
-        
+
     except FileNotFoundError:
         _log("error", "ipmitool command not found. Is it installed and in the system PATH?")
     except subprocess.TimeoutExpired:
@@ -70,14 +74,14 @@ def _run_ipmi_command(args_list, is_raw_command=True, timeout=15):
 def decimal_to_hex_for_ipmi(decimal_value):
     try:
         val = int(decimal_value)
-        if 0 <= val <= 100:
+        if 5 <= val <= 100:
             return f"0x{val:02x}"
         else:
-            _log("warning", f"Decimal value {val} out of range (0-100) for fan speed. Clamping.")
-            return f"0x{max(0, min(100, val)):02x}" 
+            _log("warning", f"Decimal value {val} out of range (5-100) for fan speed. Clamping.")
+            return f"0x{max(5, min(100, val)):02x}"
     except ValueError:
-        _log("warning", f"Invalid decimal value '{decimal_value}' for fan speed. Using 0x00.")
-        return "0x00"
+        _log("warning", f"Invalid decimal value '{decimal_value}' for fan speed. Using 0x05.")
+        return "0x05"
 
 def apply_dell_fan_control_profile():
     _log("info", "Attempting to apply Dell default dynamic fan control profile.")
@@ -86,11 +90,11 @@ def apply_dell_fan_control_profile():
 def apply_user_fan_control_profile(decimal_fan_speed):
     hex_fan_speed = decimal_to_hex_for_ipmi(decimal_fan_speed)
     _log("info", f"Attempting to apply user static fan control: {decimal_fan_speed}% ({hex_fan_speed})")
-    
+
     if _run_ipmi_command(["0x30", "0x30", "0x01", "0x00"]) is None:
         _log("error", "Failed to enable manual fan control mode.")
         return None
-    time.sleep(0.5) 
+    time.sleep(0.5)
     result = _run_ipmi_command(["0x30", "0x30", "0x02", "0xff", hex_fan_speed])
     if result is None:
         _log("error", f"Failed to set fan speed to {hex_fan_speed}.")
@@ -139,7 +143,7 @@ def parse_temperatures(sdr_data, cpu_generic_pattern_str, inlet_pattern_str, exh
         cpu_generic_pattern = re.compile(cpu_generic_pattern_str, re.IGNORECASE) if cpu_generic_pattern_str else None
         inlet_pattern = re.compile(inlet_pattern_str, re.IGNORECASE) if inlet_pattern_str else None
         exhaust_pattern = re.compile(exhaust_pattern_str, re.IGNORECASE) if exhaust_pattern_str else None
-    except re.error as e: _log("error", f"Invalid regex for temp parsing: {e}"); return temps 
+    except re.error as e: _log("error", f"Invalid regex for temp parsing: {e}"); return temps
     temp_line_regex = re.compile(r"^(.*?)\s*\|\s*[\da-fA-F]+h\s*\|\s*(?:ok|ns|nr|cr|u|\[Unknown\])\s*.*?\|\s*([-+]?\d*\.?\d+)\s*(?:degrees C|C)", re.IGNORECASE)
     _log("debug", "Parsing SDR lines for temperatures...")
     lines = sdr_data.splitlines()
@@ -156,7 +160,7 @@ def parse_temperatures(sdr_data, cpu_generic_pattern_str, inlet_pattern_str, exh
             except (ValueError, IndexError) as e: _log("warning", f"  Could not parse numeric temp ('{temp_val_str}') from: {line_content}. Error: {e}"); continue
             if not inlet_found and inlet_pattern and inlet_pattern.search(sensor_name):
                 temps["inlet_temp"] = temp_value; inlet_found = True
-                _log("debug", f"  MATCHED INLET: '{sensor_name}' as {temp_value}°C"); continue 
+                _log("debug", f"  MATCHED INLET: '{sensor_name}' as {temp_value}°C"); continue
             if not exhaust_found and exhaust_pattern and exhaust_pattern.search(sensor_name):
                 temps["exhaust_temp"] = temp_value; exhaust_found = True
                 _log("debug", f"  MATCHED EXHAUST: '{sensor_name}' as {temp_value}°C"); continue
@@ -216,7 +220,7 @@ def parse_fan_rpms(sdr_data):
                 _log("warning", f"  Could not parse numeric RPM value ('{rpm_str}') from: {line_content}. Error: {e}")
         else:
             _log("trace", f"  Line did not match fan_line_regex (looking for 'RPM'): {line_content}")
-            
+
     if not fans: _log("info", "No fan RPMs found or parsed.")
     return fans
 def retrieve_power_sdr_raw():
@@ -247,7 +251,7 @@ def parse_power_consumption(sdr_data):
         r"^(Pwr Consumption.*?)\s*\|\s*[\da-fA-F]+h\s*\|\s*(?:ok|ns|nr|cr|u|\[Unknown\])\s*.*?\|\s*([\d\.]+)\s*Watts",
         re.IGNORECASE
     )
-    
+
     _log("debug", "Parsing SDR lines for power consumption...")
     lines = sdr_data.splitlines()
 
@@ -267,8 +271,8 @@ def parse_power_consumption(sdr_data):
                 _log("warning", f"  Could not parse numeric power value ('{power_val_str}') from: {line_content}. Error: {e}")
         else:
             _log("trace", f"  Line did not match power_line_regex: {line_content}")
-            
+
     if power_watts is None:
         _log("warning", "Power Consumption sensor (Watts) not found in SDR data.")
-    
+
     return power_watts

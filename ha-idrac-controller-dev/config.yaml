@@ -1,7 +1,7 @@
-# HA-iDRAC/ha-idrac-controller/config.yaml
+# HA-iDRAC/ha-idrac-controller-dev/config.yaml
 
 name: "HA iDRAC Controller BETA"
-version: "0.1.0-dev.13" # Incremented version
+version: "0.1.0-dev.14" # Incremented version
 slug: "ha_idrac_controller_development"
 description: "Control Dell iDRAC fan speeds and monitor server health in Home Assistant. Development Version. Not for production use."
 arch:
@@ -9,20 +9,17 @@ arch:
   - "amd64"
 init: false
 boot: "auto"
+watchdog: true
 
 ingress: true
 ingress_port: 8099
 ingress_entry: "/"
 panel_icon: "mdi:server-network"
-panel_title: "iDRAC Control"
+panel_title: "iDRAC Control (Beta)"
 panel_admin: true
 
 options:
-  # Master Key for encrypting server credentials stored in /data/servers_config.json
-  master_encryption_key: ""    # Secret
-
   # Default Fan Control Logic (can be overridden per server)
-  temperature_unit: "C"
   base_fan_speed_percent: 20
   low_temp_threshold: 45
   high_temp_fan_speed_percent: 50
@@ -39,13 +36,10 @@ options:
   mqtt_password: ""
 
 schema:
-  master_encryption_key: "password"
-
   # Default Fan Control Logic
-  temperature_unit: "list(C|F)"
-  base_fan_speed_percent: "int(0,100)"
+  base_fan_speed_percent: "int(5,100)"
   low_temp_threshold: "int(0,100)"
-  high_temp_fan_speed_percent: "int(0,100)"
+  high_temp_fan_speed_percent: "int(5,100)"
   critical_temp_threshold: "int(0,100)"
 
   # Polling and Logging

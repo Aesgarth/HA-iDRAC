@@ -29,9 +29,22 @@ This add-on connects to your server's iDRAC interface using IPMI to:
     * (Future/Optional) Configure an advanced multi-point fan curve.
 * **Configurable:** Set iDRAC credentials, fan thresholds, temperature units, and MQTT details via the Home Assistant add-on configuration panel.
 
+## Changes in this fork (0.1.3)
+
+* CPU temperatures are also found on 13G servers (`CPU1 Temp`/`CPU2 Temp`) —
+  without this the add-on fell back to Dell auto on every cycle and never
+  controlled the fans on a T430/R730.
+* 2 °C hysteresis around the low and critical thresholds.
+* Fan speeds below 5 % are clamped to 5 %.
+* The iDRAC password is passed with `ipmitool -E`/`IPMI_PASSWORD` instead of
+  appearing in the process list.
+* Watchdog enabled so Supervisor restarts the add-on if it exits.
+
+---
+
 ## Prerequisites
 
-1.  **Dell PowerEdge Server with iDRAC:** This add-on uses IPMI, which is available on most Dell PowerEdge servers with an iDRAC (iDRAC 7, 8, 9 and newer should generally work). This add-on has been tested with an R720 (iDRAC7).
+1.  **Dell PowerEdge Server with iDRAC 7 or 8:** This add-on uses IPMI. Both the 12th-generation sensor naming (`Temp`, iDRAC 7) and the 13th-generation naming (`CPU1 Temp`/`CPU2 Temp`, iDRAC 8 — e.g. **T430**, R630, R730) are supported. The original code was hardware-tested on an R720; the 13G pattern is covered by unit tests but not yet verified on a physical T430.
 2.  **Network Connectivity:** Your Home Assistant instance must be able to reach your server's iDRAC IP address over the network.
 3.  **IPMI over LAN Enabled in iDRAC:** This is crucial.
 
@@ -63,7 +76,7 @@ This add-on connects to your server's iDRAC interface using IPMI to:
     * Click the **three-dots menu** (⋮) in the top right corner and select **"Repositories"**.
     * In the "Manage add-on repositories" dialog, paste the following URL:
         ```
-        [https://github.com/Aesgarth/HA-iDRAC](https://github.com/Aesgarth/HA-iDRAC)
+        https://github.com/sam2kb/HA-iDRAC
         ```
     * Click **"ADD"** and then **"CLOSE"**.
 
@@ -86,7 +99,7 @@ After installation, you **must** configure the add-on before starting it.
         * `idrac_username`: (Required) Your iDRAC username (default: `root`).
         * `idrac_password`: (Required) Your iDRAC password.
     * **Fan Control Logic (Simple Mode):**
-        * `temperature_unit`: `C` (Celsius) or `F` (Fahrenheit). Temperatures from iDRAC are read in Celsius; if you set this to 'F', thresholds you enter will be assumed to be in Fahrenheit and converted internally. Display in the web UI will also respect this.
+        * `temperature_unit`: `C` (Celsius) or `F` (Fahrenheit). Temperatures from iDRAC are read in Celsius; if you set this to 'F', the thresholds you enter are assumed to be in Fahrenheit and converted internally. The dashboard and MQTT sensors always report °C.
         * `base_fan_speed_percent`: (Default: `20`) The fan speed (0-100%) to use when the hottest CPU core is below the `low_temp_threshold`.
         * `low_temp_threshold`: (Default: `45`) The CPU temperature (in your selected `temperature_unit`) above which fans will switch from `base_fan_speed_percent` to `high_temp_fan_speed_percent`.
         * `high_temp_fan_speed_percent`: (Default: `50`) The fan speed (0-100%) to use when the hottest CPU core is at or above `low_temp_threshold` but below `critical_temp_threshold`.
@@ -152,7 +165,7 @@ If MQTT is configured correctly, the following entities will be automatically di
 
 ## Contributing / Reporting Issues
 
-Please open an issue on the [GitHub repository](https://github.com/Aesgarth/HA-iDRAC/issues) for any bugs, feature requests, or questions.
+Please open an issue on the [GitHub repository](https://github.com/sam2kb/HA-iDRAC/issues) for any bugs, feature requests, or questions.
 
 ## License
 

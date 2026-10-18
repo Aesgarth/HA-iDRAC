@@ -5,23 +5,25 @@ import sys
 import signal
 import threading
 import re
-import json 
+import json
 
 from . import ipmi_manager
 from . import web_server
 from . import mqtt_client
+from .fan_logic import SimpleFanState
 
 # --- Global Variables ---
 running = True
 addon_options = {}
 server_info = {
     "manufacturer": "Unknown", "model": "Unknown", "is_gen14_plus": False,
-    "cpu_generic_temp_pattern": None, 
-    "inlet_temp_name_pattern": None, 
+    "cpu_generic_temp_pattern": None,
+    "inlet_temp_name_pattern": None,
     "exhaust_temp_name_pattern": None
 }
-app_config = {} 
+app_config = {}
 loop_count = 0
+fan_state = SimpleFanState()
 current_parsed_status = { # For sharing with web_server via file
     "cpu_temps_c": [], "hottest_cpu_temp_c": "N/A",
     "inlet_temp_c": "N/A", "exhaust_temp_c": "N/A",
@@ -47,7 +49,7 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 
 def determine_server_generation(model_name):
     if not model_name: return False
-    match = re.search(r"^[RT]\s?(\d)(\d)\d+", model_name.upper())
+    match = re.search(r"\b[RT]\s?(\d)(\d)\d\b", model_name.upper())
     if match:
         try:
             gen_indicator_digit = int(match.group(2))
@@ -74,7 +76,7 @@ def save_current_status_to_file(status_dict):
 def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
     global addon_options, app_config, server_info
     print("[MAIN] Loading configuration and initializing...", flush=True)
-    
+
     addon_options = {
         "idrac_ip": os.getenv("IDRAC_IP"), "idrac_username": os.getenv("IDRAC_USERNAME"),
         "idrac_password": os.getenv("IDRAC_PASSWORD"),
@@ -94,7 +96,7 @@ def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
     print(f"[{log_level.upper()}] Add-on options loaded: IDRAC_IP={addon_options['idrac_ip']}, LogLevel={log_level}", flush=True)
 
     ipmi_manager.configure_ipmi(
-        addon_options["idrac_ip"], addon_options["idrac_username"], 
+        addon_options["idrac_ip"], addon_options["idrac_username"],
         addon_options["idrac_password"], log_level=log_level
     )
 
@@ -105,7 +107,7 @@ def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
         print(f"[{log_level.upper()}] Server: {server_info['manufacturer']} {server_info['model']} (Gen14+: {server_info['is_gen14_plus']})", flush=True)
     else:
         print(f"[WARNING] Could not determine server model.", flush=True)
-    
+
     if mqtt_handler: # Configure MQTT client with device info
         mqtt_handler.configure_broker(
             addon_options["mqtt_host"], addon_options["mqtt_port"],
@@ -113,12 +115,12 @@ def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
             log_level
         )
         mqtt_handler.set_device_info(
-            server_info.get("manufacturer"), 
-            server_info.get("model"), 
+            server_info.get("manufacturer"),
+            server_info.get("model"),
             addon_options.get("idrac_ip")
         )
 
-    server_info["cpu_generic_temp_pattern"] = r"^Temp$" 
+    server_info["cpu_generic_temp_pattern"] = r"(?:^Temp$|CPU\s?\d)"
     server_info["inlet_temp_name_pattern"] = r"Inlet Temp"
     server_info["exhaust_temp_name_pattern"] = r"Exhaust Temp"
     print(f"[{log_level.upper()}] Using temp patterns: CPU_generic='{server_info['cpu_generic_temp_pattern']}', Inlet='{server_info['inlet_temp_name_pattern']}', Exhaust='{server_info['exhaust_temp_name_pattern']}'", flush=True)
@@ -140,13 +142,17 @@ def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
 def main_control_loop(mqtt_handler):
     global running, app_config, addon_options, server_info, loop_count, current_parsed_status
     global discovered_cpu_sensors, discovered_fan_rpm_sensors # static_sensors_discovered is managed by mqtt_client on_connect
-    
+
     log_level = addon_options['log_level']
 
     if not (addon_options["idrac_ip"] and addon_options["idrac_username"] and addon_options["idrac_password"]):
-        print("[ERROR] iDRAC credentials not fully configured. Exiting.", flush=True)
-        return 
-    
+        # Keep the web UI (and the Supervisor watchdog) alive instead of
+        # exiting in a restart loop; the user can fix the options and restart.
+        print("[ERROR] iDRAC credentials not fully configured. Idling until restarted.", flush=True)
+        while running:
+            time.sleep(1)
+        return
+
     print(f"[{log_level.upper()}] Entering main control loop. Interval: {addon_options['check_interval_seconds']}s", flush=True)
 
     while running:
@@ -214,7 +220,7 @@ def main_control_loop(mqtt_handler):
                         )
                         new_cpu_slugs.add(slug)
                     discovered_cpu_sensors = new_cpu_slugs
-                
+
                 for i, fan_info in enumerate(parsed_fan_rpms):
                     fan_name = fan_info["name"]
                     safe_fan_name_slug = re.sub(r'[^a-zA-Z0-9_]+', '_', fan_name).lower().strip('_')
@@ -238,29 +244,28 @@ def main_control_loop(mqtt_handler):
                 print(f"[WARNING] No CPU temperatures available for fan control.", flush=True)
 
             # --- Fan Control Logic ---
-            target_fan_speed_display = "N/A" 
-            if hottest_cpu_temp_c is not None:
-                low_thresh_c = addon_options["low_temp_threshold_c"]
-                crit_thresh_c = addon_options["critical_temp_threshold_c"]
-                if hottest_cpu_temp_c >= crit_thresh_c:
-                    print(f"[{log_level.upper()}] CPU ({hottest_cpu_temp_c}°C) >= CRITICAL ({crit_thresh_c}°C). Dell auto.", flush=True)
-                    ipmi_manager.apply_dell_fan_control_profile()
-                    target_fan_speed_display = "Dell Auto"
-                elif hottest_cpu_temp_c >= low_thresh_c:
-                    target_fan_speed_val = addon_options["high_temp_fan_speed_percent"]
-                    print(f"[{log_level.upper()}] CPU ({hottest_cpu_temp_c}°C) >= LOW ({low_thresh_c}°C). Fan: {target_fan_speed_val}%", flush=True)
-                    ipmi_manager.apply_user_fan_control_profile(target_fan_speed_val)
-                    target_fan_speed_display = target_fan_speed_val
-                else: 
-                    target_fan_speed_val = addon_options["base_fan_speed_percent"]
-                    print(f"[{log_level.upper()}] CPU ({hottest_cpu_temp_c}°C) < LOW ({low_thresh_c}°C). Fan: {target_fan_speed_val}%", flush=True)
-                    ipmi_manager.apply_user_fan_control_profile(target_fan_speed_val)
-                    target_fan_speed_display = target_fan_speed_val
-            else:
+            target_fan_speed_display = "N/A"
+            if hottest_cpu_temp_c is None:
                 print(f"[WARNING] Hottest CPU temp N/A. Applying Dell auto fans for safety.", flush=True)
                 ipmi_manager.apply_dell_fan_control_profile()
                 target_fan_speed_display = "Dell Auto (Safety)"
-            
+            else:
+                low_thresh_c = addon_options["low_temp_threshold_c"]
+                crit_thresh_c = addon_options["critical_temp_threshold_c"]
+                if fan_state.should_use_auto(hottest_cpu_temp_c, crit_thresh_c):
+                    print(f"[{log_level.upper()}] CPU ({hottest_cpu_temp_c}°C) at/above CRITICAL ({crit_thresh_c}°C). Dell auto.", flush=True)
+                    ipmi_manager.apply_dell_fan_control_profile()
+                    target_fan_speed_display = "Dell Auto"
+                else:
+                    target_fan_speed_val = fan_state.simple_speed(
+                        hottest_cpu_temp_c, low_thresh_c,
+                        addon_options["base_fan_speed_percent"],
+                        addon_options["high_temp_fan_speed_percent"],
+                    )
+                    print(f"[{log_level.upper()}] CPU ({hottest_cpu_temp_c}°C, low {low_thresh_c}°C). Fan: {target_fan_speed_val}%", flush=True)
+                    ipmi_manager.apply_user_fan_control_profile(target_fan_speed_val)
+                    target_fan_speed_display = target_fan_speed_val
+
             # --- Update Shared Status File for Web UI ---
             current_parsed_status_for_file = {
                 "cpu_temps_c": cpu_temps_list_c,
@@ -294,8 +299,8 @@ def main_control_loop(mqtt_handler):
                         mqtt_handler.publish_sensor_state(sensor_type_slug="target_fan_speed", value_dict={"speed": int(target_fan_speed_display)})
                     except ValueError:
                         mqtt_handler.publish_sensor_state(sensor_type_slug="target_fan_speed", value_dict={"speed": None}) # Or publish the string "Auto"
-                else: 
-                     mqtt_handler.publish_sensor_state(sensor_type_slug="target_fan_speed", value_dict={"speed": None}) 
+                else:
+                     mqtt_handler.publish_sensor_state(sensor_type_slug="target_fan_speed", value_dict={"speed": None})
                 # Power Consumption
                 if power_consumption_watts is not None:
                     mqtt_handler.publish_sensor_state(sensor_type_slug="power_consumption", value_dict={"power": power_consumption_watts})
@@ -307,7 +312,7 @@ def main_control_loop(mqtt_handler):
                     mqtt_handler.publish_sensor_state(sensor_type_slug=f"fan_{safe_fan_name_slug}_rpm", value_dict={"rpm": fan_info["rpm"]})
 
             print(f"[{log_level.upper()}] --- Cycle {loop_count + 1} End ---", flush=True)
-        
+
         except Exception as cycle_exception: # Catch exceptions within the cycle's work
             print(f"[ERROR] Unhandled exception within cycle {loop_count + 1}: {cycle_exception}", flush=True)
             import traceback
@@ -320,7 +325,7 @@ def main_control_loop(mqtt_handler):
         # This calculation should now always happen, even if there was an error in the 'try' block above.
         time_taken = time.time() - start_time
         sleep_duration = max(0.1, addon_options["check_interval_seconds"] - time_taken)
-        
+
         print(f"[{log_level.upper()}] Cycle {loop_count + 1} took {time_taken:.2f}s. Sleeping for {sleep_duration:.2f}s.", flush=True)
         loop_count += 1
 
@@ -334,7 +339,7 @@ mqtt_handler_instance = None
 
 if __name__ == "__main__":
     print("[MAIN] ===== HA iDRAC Controller Python Application Starting =====", flush=True)
-    
+
     mqtt_handler_instance = mqtt_client.MqttClient() # Create instance early
 
     load_and_configure(mqtt_handler_instance) # Pass instance to configure it
@@ -345,9 +350,9 @@ if __name__ == "__main__":
         mqtt_handler_instance.connect()
     else:
         print("[INFO] MQTT host not configured or is default placeholder. MQTT client will not connect.", flush=True)
-        mqtt_handler_instance = None 
+        mqtt_handler_instance = None
 
-    web_server_port = 8099 
+    web_server_port = 8099
     web_thread = threading.Thread(target=web_server.run_web_server, args=(web_server_port,), daemon=True)
     web_thread.start()
     print(f"[MAIN] Admin Web Panel server starting in background thread on port {web_server_port}...", flush=True)
@@ -359,7 +364,7 @@ if __name__ == "__main__":
         import traceback; traceback.print_exc(file=sys.stdout); sys.stdout.flush()
     finally:
         print("[MAIN] Main execution finished. Initiating final cleanup...", flush=True)
-        if addon_options.get("idrac_ip") and ipmi_manager._IPMI_BASE_ARGS: 
+        if addon_options.get("idrac_ip") and ipmi_manager._IPMI_BASE_ARGS:
             print("[MAIN] Attempting to set fans to Dell default profile...", flush=True)
             ipmi_manager.apply_dell_fan_control_profile()
         if mqtt_handler_instance and getattr(mqtt_handler_instance, 'is_connected', False):

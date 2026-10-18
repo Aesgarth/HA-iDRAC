@@ -45,7 +45,8 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
 
 ## Prerequisites
 
-1.  **Dell PowerEdge Server with iDRAC:** The add-on uses IPMI, which is available on most Dell servers (iDRAC 7, 8, 9+ should work). Tested on an R720 with iDRAC7.
+1.  **Dell PowerEdge Server with iDRAC 7 or 8:** The add-on uses IPMI. 12th-generation (iDRAC 7, e.g. R720) and 13th-generation (iDRAC 8, e.g. **T430**, R630, R730) sensor layouts are supported and covered by unit tests. The original add-on was hardware-tested on an R720; 13G hardware verification is still pending, so check the log output on first start.
+    * For a T430, `ipmitool sdr type temperature` should show `CPU1 Temp`/`CPU2 Temp` on entities `3.1`/`3.2` plus `Inlet Temp`/`Exhaust Temp` on `7.x`.
 2.  **Network Connectivity:** Your Home Assistant instance must be able to reach each server's iDRAC IP address.
 3.  **IPMI over LAN Enabled in iDRAC:** This is crucial for the add-on to function.
     * Log in to your iDRAC's web interface.
@@ -64,7 +65,7 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
     * Click the **three-dots menu** (⋮) in the top right and select **Repositories**.
     * Paste the following URL and click **ADD**:
         ```
-        [https://github.com/Aesgarth/HA-iDRAC](https://github.com/Aesgarth/HA-iDRAC)
+        https://github.com/sam2kb/HA-iDRAC
         ```
 2.  **Install the Add-on:**
     * Refresh the page. You should now see the "HA iDRAC Controller BETA" add-on in the store.
@@ -115,7 +116,7 @@ For each server, the add-on will create a new device in Home Assistant with the 
 
 ## Contributing / Reporting Issues
 
-This is a development version. Please report any bugs, issues, or feature suggestions by opening an issue on the [GitHub repository](https://github.com/Aesgarth/HA-iDRAC/issues). Please provide logs and details about your server model if you encounter problems.
+This is a development version. Please report any bugs, issues, or feature suggestions by opening an issue on the [GitHub repository](https://github.com/sam2kb/HA-iDRAC/issues). Please provide logs and details about your server model if you encounter problems.
 
 ## License
 

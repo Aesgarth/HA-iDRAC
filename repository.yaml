@@ -1,4 +1,4 @@
 # HA-iDRAC/repository.yaml
-name: "Aesgarth's Custom iDRAC Add-on"  # You can name your repository collection
-url: "https://github.com/Aesgarth/HA-iDRAC" # The URL of your repository
-maintainer: "Aesgarth" # Your GitHub username or name
+name: "HA iDRAC Controller (T430/13G fork)"
+url: "https://github.com/sam2kb/HA-iDRAC"
+maintainer: "sam2kb"

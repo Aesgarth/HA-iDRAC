@@ -10,6 +10,10 @@ _IDRAC_USER = ""
 _IDRAC_PASSWORD = ""
 _IPMI_BASE_ARGS = []
 _LOG_LEVEL = "info"
+_LAST_STDERR = ""
+_FAN_CONTROL_REFUSED = False
+_FAN_CONTROL_EVER_ACCEPTED = False
+_REFUSAL_SIGNATURES = ("rsp=0xc1", "rsp=0xd5", "rsp=0xd4")
 
 # --- Configuration ---
 def configure_ipmi(ip, user, password, conn_type="lanplus", log_level="info"):
@@ -54,10 +58,14 @@ def _run_ipmi_command(args_list, is_raw_command=True, timeout=15):
                                 timeout=timeout, env=env)
 
         if result.returncode != 0:
+            global _LAST_STDERR
+            _LAST_STDERR = result.stderr.strip()
             _log("error", f"IPMI command failed: {' '.join(command_to_run)}")
             _log("error", f"STDOUT: {result.stdout.strip()}")
-            _log("error", f"STDERR: {result.stderr.strip()}")
+            _log("error", f"STDERR: {_LAST_STDERR}")
             return None
+
+        _LAST_STDERR = ""
 
         _log("debug", f"IPMI command STDOUT: {result.stdout.strip()}")
         return result.stdout.strip()
@@ -83,22 +91,58 @@ def decimal_to_hex_for_ipmi(decimal_value):
         _log("warning", f"Invalid decimal value '{decimal_value}' for fan speed. Using 0x05.")
         return "0x05"
 
+def _is_fan_control_refusal():
+    if _FAN_CONTROL_EVER_ACCEPTED:
+        return False
+    stderr = (_LAST_STDERR or "").lower()
+    return any(sig in stderr for sig in _REFUSAL_SIGNATURES)
+
+def _note_fan_control_refusal():
+    global _FAN_CONTROL_REFUSED
+    if _FAN_CONTROL_REFUSED or not _is_fan_control_refusal():
+        return
+    _FAN_CONTROL_REFUSED = True
+    _log("warning", "This iDRAC refused the Dell fan-control command (0xc1/0xd4/0xd5); "
+                    "fan control is disabled and monitoring continues. Check that the account "
+                    "is an Administrator and that the server is 12G/13G.")
+
+def is_fan_control_refused():
+    return _FAN_CONTROL_REFUSED
+
 def apply_dell_fan_control_profile():
+    if _FAN_CONTROL_REFUSED:
+        _log("debug", "Skipping Dell fan profile: this server refused fan control.")
+        return None
     _log("info", "Attempting to apply Dell default dynamic fan control profile.")
-    return _run_ipmi_command(["0x30", "0x30", "0x01", "0x01"])
+    result = _run_ipmi_command(["0x30", "0x30", "0x01", "0x01"])
+    if result is None and not _is_fan_control_refusal():
+        time.sleep(0.5)
+        _log("warning", "Retrying Dell default fan control once.")
+        result = _run_ipmi_command(["0x30", "0x30", "0x01", "0x01"])
+    if result is None:
+        _note_fan_control_refusal()
+    return result
 
 def apply_user_fan_control_profile(decimal_fan_speed):
+    global _FAN_CONTROL_EVER_ACCEPTED
+    if _FAN_CONTROL_REFUSED:
+        _log("debug", "Skipping user fan profile: this server refused fan control.")
+        return None
+
     hex_fan_speed = decimal_to_hex_for_ipmi(decimal_fan_speed)
     _log("info", f"Attempting to apply user static fan control: {decimal_fan_speed}% ({hex_fan_speed})")
 
     if _run_ipmi_command(["0x30", "0x30", "0x01", "0x00"]) is None:
         _log("error", "Failed to enable manual fan control mode.")
+        _note_fan_control_refusal()
         return None
     time.sleep(0.5)
     result = _run_ipmi_command(["0x30", "0x30", "0x02", "0xff", hex_fan_speed])
     if result is None:
-        _log("error", f"Failed to set fan speed to {hex_fan_speed}.")
+        _log("error", f"Failed to set fan speed to {hex_fan_speed}; handing fans back to Dell auto.")
+        apply_dell_fan_control_profile()
     else:
+        _FAN_CONTROL_EVER_ACCEPTED = True
         _log("info", f"Successfully applied user fan control: {decimal_fan_speed}%")
     return result
 
@@ -158,6 +202,8 @@ def parse_temperatures(sdr_data, cpu_generic_pattern_str, inlet_pattern_str, exh
             _log("trace", f"  Line matched main temp regex. Sensor: '{sensor_name}', ValueStr: '{temp_val_str}'")
             try: temp_value = int(float(temp_val_str))
             except (ValueError, IndexError) as e: _log("warning", f"  Could not parse numeric temp ('{temp_val_str}') from: {line_content}. Error: {e}"); continue
+            if not -20 <= temp_value <= 125:
+                _log("debug", f"  Ignoring implausible temperature {temp_value} C from: {line_content}"); continue
             if not inlet_found and inlet_pattern and inlet_pattern.search(sensor_name):
                 temps["inlet_temp"] = temp_value; inlet_found = True
                 _log("debug", f"  MATCHED INLET: '{sensor_name}' as {temp_value}°C"); continue

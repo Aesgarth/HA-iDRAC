@@ -54,6 +54,12 @@ class IPMIManager:
         self.password = password
         self.log_level = log_level.lower()
         self.base_args = self._build_base_args(conn_type)
+        self.last_stderr = ""
+        # Set when the iDRAC answers "I do not have that command" or "not for
+        # this account". Only ever set while no fan command has succeeded, so
+        # a later failure can never leave the fans pinned at a user speed.
+        self.fan_control_refused = False
+        self.fan_control_ever_accepted = False
         self._log("info", f"IPMI Manager initialized for host: {self.ip}")
 
     def _build_base_args(self, conn_type):
@@ -89,10 +95,13 @@ class IPMIManager:
             )
 
             if result.returncode != 0:
+                self.last_stderr = result.stderr.strip()
                 self._log("error", f"Command failed: {' '.join(command_to_run)}")
                 self._log("error", f"STDOUT: {result.stdout.strip()}")
-                self._log("error", f"STDERR: {result.stderr.strip()}")
+                self._log("error", f"STDERR: {self.last_stderr}")
                 return None
+
+            self.last_stderr = ""
 
             self._log("debug", f"Command STDOUT: {result.stdout.strip()}")
             return result.stdout.strip()
@@ -124,26 +133,95 @@ class IPMIManager:
         val = self._clamp_fan_speed(decimal_value)
         return f"0x{val:02x}"
 
-    def apply_dell_fan_control_profile(self):
+    # --- Fan control refusal handling -------------------------------------
+    # iDRAC 9/10 and accounts below Administrator answer the Dell OEM fan
+    # commands with 0xc1/0xd5 (no such command) or 0xd4 (privilege). Those are
+    # permanent for the life of the add-on, so retrying them every cycle only
+    # produces noise. A 0xcc ("invalid data field") is not a refusal of fan
+    # control itself and is handled as a failed write.
+    _REFUSAL_SIGNATURES = ("rsp=0xc1", "rsp=0xd5", "rsp=0xd4")
+
+    def _is_fan_control_refusal(self):
+        if self.fan_control_ever_accepted:
+            return False
+        stderr = (self.last_stderr or "").lower()
+        return any(sig in stderr for sig in self._REFUSAL_SIGNATURES)
+
+    def _note_fan_control_refusal(self):
+        if self.fan_control_refused or not self._is_fan_control_refusal():
+            return
+        self.fan_control_refused = True
+        self._log(
+            "warning",
+            "This iDRAC refused the Dell fan-control command (0xc1/0xd4/0xd5). "
+            "It is either a 14G+ iDRAC, or the configured account is not an "
+            "Administrator. Fan control is disabled and temperatures will keep "
+            "being monitored.",
+        )
+
+    def apply_dell_fan_control_profile(self, force=False):
+        if self.fan_control_refused and not force:
+            self._log("debug", "Skipping Dell fan profile: this server refused fan control.")
+            return None
         self._log("info", "Applying Dell default dynamic fan control.")
-        return self._run_ipmi_command(["0x30", "0x30", "0x01", "0x01"])
+        result = self._run_ipmi_command(["0x30", "0x30", "0x01", "0x01"])
+        if result is None and not self._is_fan_control_refusal():
+            # This is the safety-critical hand-back; one retry for a transient
+            # BMC/session error before reporting failure.
+            time.sleep(0.5)
+            self._log("warning", "Retrying Dell default fan control once.")
+            result = self._run_ipmi_command(["0x30", "0x30", "0x01", "0x01"])
+        if result is None:
+            self._note_fan_control_refusal()
+        return result
 
     def apply_user_fan_control_profile(self, decimal_fan_speed):
+        if self.fan_control_refused:
+            self._log("debug", "Skipping user fan profile: this server refused fan control.")
+            return None
+
         speed = self._clamp_fan_speed(decimal_fan_speed)
         hex_fan_speed = f"0x{speed:02x}"
         self._log("info", f"Applying user static fan control: {speed}% ({hex_fan_speed})")
 
         if self._run_ipmi_command(["0x30", "0x30", "0x01", "0x00"]) is None:
             self._log("error", "Failed to enable manual fan control mode.")
+            self._note_fan_control_refusal()
             return None
         time.sleep(0.5)
 
         result = self._run_ipmi_command(["0x30", "0x30", "0x02", "0xff", hex_fan_speed])
         if result is None:
-            self._log("error", f"Failed to set fan speed to {hex_fan_speed}.")
-        else:
-            self._log("info", f"Successfully applied user fan control: {speed}%")
+            # The manual command landed but the speed did not. Leaving the fans
+            # in manual mode would pin them at whatever the previous cycle set,
+            # so hand them straight back to Dell's dynamic profile.
+            self._log("error", f"Failed to set fan speed to {hex_fan_speed}; handing fans back to Dell auto.")
+            self.apply_dell_fan_control_profile(force=True)
+            return None
+
+        self.fan_control_ever_accepted = True
+        self._log("info", f"Successfully applied user fan control: {speed}%")
         return result
+
+    # --- Third-party PCIe card cooling response ---------------------------
+    # Dell OEM command from the 12G/13G IPMI set (same bytes used by
+    # tigerblue77's controller): the last-but-two byte is 0x00 to leave Dell's
+    # default cooling response enabled and 0x01 to disable it.
+    _PCIE_COOLING_RESPONSE_CMD = [
+        "0x30", "0xce", "0x00", "0x16", "0x05", "0x00", "0x00", "0x00", "0x05", "0x00",
+    ]
+
+    def set_third_party_pcie_cooling_response(self, enabled):
+        payload = self._PCIE_COOLING_RESPONSE_CMD + ["0x00" if enabled else "0x01", "0x00", "0x00"]
+        self._log("info", f"Setting third-party PCIe cooling response to {'Dell default' if enabled else 'disabled'}.")
+        return self._run_ipmi_command(payload) is not None
+
+    def get_firmware_version(self):
+        output = self._run_ipmi_command(["mc", "info"], is_raw_command=False, timeout=20)
+        if not output:
+            return None
+        match = re.search(r"Firmware Revision\s*:\s*(\S+)", output, re.IGNORECASE)
+        return match.group(1) if match else None
 
     def get_server_model_info(self):
         self._log("info", "Retrieving server model information...")
@@ -152,7 +230,7 @@ class IPMIManager:
             self._log("warning", "Could not retrieve FRU data.")
             return None
 
-        model_info = {"manufacturer": "Unknown", "model": "Unknown"}
+        model_info = {"manufacturer": "Unknown", "model": "Unknown", "serial": None}
         patterns = {
             "manufacturer": r"Product Manufacturer\s*:\s*(.*)",
             "model": r"Product Name\s*:\s*(.*)",
@@ -176,18 +254,26 @@ class IPMIManager:
             if m_board_prod:
                 model_info["model"] = m_board_prod.group(1).strip()
 
+        for serial_field in (r"Product Serial\s*:\s*(.*)", r"Chassis Serial\s*:\s*(.*)",
+                             r"Board Serial\s*:\s*(.*)"):
+            m_serial = re.search(serial_field, fru_data, re.IGNORECASE)
+            if m_serial and m_serial.group(1).strip():
+                model_info["serial"] = m_serial.group(1).strip()
+                break
+
         if "dell" in model_info["manufacturer"].lower():
             model_info["manufacturer"] = "DELL"
 
-        self._log("info", f"Server Info: Manufacturer='{model_info['manufacturer']}', Model='{model_info['model']}'")
+        self._log("info", f"Server Info: Manufacturer='{model_info['manufacturer']}', "
+                           f"Model='{model_info['model']}', Serial={model_info['serial']}")
         return model_info
 
     def retrieve_temperatures_raw(self):
         self._log("debug", "Retrieving raw temperature SDR data...")
         return self._run_ipmi_command(["sdr", "type", "temperature"], is_raw_command=False)
 
-    def parse_temperatures(self, sdr_data, cpu_pattern_str=None, inlet_pattern_str="Inlet",
-                           exhaust_pattern_str="Exhaust"):
+    def parse_temperatures(self, sdr_data, cpu_pattern_str=None, inlet_pattern_str=r"^Inlet Temp\b",
+                           exhaust_pattern_str=r"^Exhaust Temp\b"):
         """Parse `ipmitool sdr type temperature` output.
 
         CPU sensors are identified by processor entity ID (3.x), which covers
@@ -206,10 +292,12 @@ class IPMIManager:
                 temp_value = int(round(float(match.group("value"))))
             except ValueError:
                 continue
+            if not -20 <= temp_value <= 125:
+                self._log("debug", f"Ignoring implausible temperature {temp_value} C from {line.strip()}")
+                continue
 
             sensor_name = match.group("name").strip()
             entity = match.group("entity")
-            name_l = sensor_name.lower()
 
             if inlet_pattern_str and re.search(inlet_pattern_str, sensor_name, re.IGNORECASE):
                 if temps["inlet_temp"] is None:

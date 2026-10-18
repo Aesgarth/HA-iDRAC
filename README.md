@@ -16,6 +16,23 @@ number of robustness problems in the original add-ons.
 - **PSU status is no longer wrong on 13G.** The old check required a
   `Voltage 1` sensor that iDRAC 8 does not expose; presence plus `PSn PG Fail`
   is used instead.
+- **Inlet/exhaust sensors are matched at the start of the name**, so a
+  `PSU1 Inlet Temp` sensor can no longer replace the chassis inlet reading.
+  This is the same trap tigerblue77's controller fixed in issue #231.
+- **Refused fan control is remembered.** A 14G+/iDRAC 9 server, or an account
+  below Administrator, answers the Dell OEM fan commands with 0xc1/0xd4/0xd5.
+  The add-on detects it once, stops retrying, and keeps monitoring.
+- **Optional third-party PCIe cooling response.** Per-server setting that sends
+  the 12G/13G OEM command to disable Dell's default cooling response for
+  non-Dell cards, and restores Dell's setting on shutdown. The exact command
+  bytes are the ones used by tigerblue77's controller.
+- **Partial fan failures are handed back to Dell auto** instead of leaving the
+  fans pinned at the previous manual speed.
+- **Diagnostics**: firmware version and service tag/serial are read from the
+  iDRAC and published on the MQTT device (`sw_version`, `serial_number`).
+- **Sanity checks**: implausible temperature readings (-20..125 °C) and
+  contradictory thresholds (`critical <= low`, `high < base`) are ignored or
+  corrected with a warning.
 - **Fan control no longer flaps.** A 2 °C hysteresis band is applied to the
   base/high thresholds and to the hand-back-to-iDRAC critical threshold.
 - **Safe fan floor.** 0–4 % requests are clamped to 5 %; the web UI and add-on
@@ -25,7 +42,8 @@ number of robustness problems in the original add-ons.
   discovery after a reconnect.
 - **Passwords are no longer on the `ipmitool` command line.** `-E` +
   `IPMI_PASSWORD` is used, so the iDRAC password does not appear in `ps`.
-- **Watchdog enabled** so Supervisor restarts an add-on that exits unexpectedly.
+- **Watchdog enabled** so Supervisor restarts an add-on that exits unexpectedly; the BETA
+  add-on also exposes `/health`, which fails only if every server worker has died.
 - **Removed the unused `master_encryption_key` option.** It was never used by
   the code; iDRAC credentials live in the add-on's private `/data` volume.
 - **Tests + CI** for the SDR parsers and the fan hysteresis logic.
@@ -34,11 +52,11 @@ number of robustness problems in the original add-ons.
 
 ## Add-ons
 
-1. **HA iDRAC Controller** (`ha_idrac_controller`, version 0.1.3, "stable")
+1. **HA iDRAC Controller** (`ha_idrac_controller`, version 0.1.4, "stable")
    - Single server, configured from the add-on Configuration tab.
    - Simple 3-tier fan control with hysteresis, monitoring, MQTT discovery.
 
-2. **HA iDRAC Controller BETA** (`ha_idrac_controller_development`, version 0.1.0-dev.14)
+2. **HA iDRAC Controller BETA** (`ha_idrac_controller_development`, version 0.1.0-dev.15)
    - Multi-server, per-server fan modes (simple / curve / target temperature),
      monitor-only mode, PSU + connectivity sensors, graceful shutdown button.
    - Recommended for T430/iDRAC 8 because it is the actively developed one.
@@ -80,6 +98,9 @@ slugs are the same, so keep only one of the two repositories in the store.
 - The BETA add-on stores servers in `/data/servers_config.json` (root-only on
   HA OS) with the iDRAC password in plain text. Do not reuse an administrator
   password from another system.
+- The add-on needs an iDRAC account with **Administrator** privilege. A lower
+  account gets the fan commands refused with 0xd4 and the add-on switches to
+  monitoring-only automatically.
 - On stop the BETA add-on hands the fans back to Dell's automatic profile. If
   the container is killed without running its shutdown handler, the iDRAC
   stays in manual mode at the last speed — enable the Supervisor watchdog
@@ -91,12 +112,10 @@ slugs are the same, so keep only one of the two repositories in the store.
 
 ## Known limitations
 
-- Third-party PCIe cards can make the iDRAC ramp the fans even in manual
-  mode on some firmware; upstream issue #4 asks for the OEM command that
-  disables that response and it is deliberately not implemented here (the
-  command bytes differ between firmware generations and a wrong write is
-  worse than a noisy fan). Use the iDRAC's own "Third-Party PCIe Card
-  Cooling Response" setting if your firmware has it.
+- The third-party PCIe cooling-response command is a Dell OEM command for
+  12G/13G. Some firmware does not accept it; the add-on logs that once and
+  leaves the setting untouched. It is only applied when fan control is
+  enabled.
 - iDRAC 9 / 14th generation and newer are not a target of this fork. The raw
   fan commands and sensor layout differ.
 - A `SIGKILL`, OOM kill or host power loss cannot run the shutdown handler, so

@@ -106,3 +106,90 @@ def test_stable_fan_floor_prevents_zero_percent():
     assert stable_mod.decimal_to_hex_for_ipmi(0) == "0x05"
     assert stable_mod.decimal_to_hex_for_ipmi(3) == "0x05"
     assert stable_mod.decimal_to_hex_for_ipmi(100) == "0x64"
+
+
+SDR_WITH_PSU_INLET = """\
+PSU1 Inlet Temp   | 0Dh | ok  | 10.1 | 34 degrees C
+Inlet Temp       | 04h | ok  |  7.1 | 22 degrees C
+CPU1 Temp        | 01h | ok  |  3.1 | 45 degrees C
+"""
+
+
+def test_psu_inlet_sensor_does_not_override_chassis_inlet():
+    temps = make_manager().parse_temperatures(SDR_WITH_PSU_INLET)
+    assert temps["inlet_temp"] == 22
+    assert temps["cpu_temps"] == [45]
+
+
+def test_third_party_cooling_response_uses_dell_oem_bytes(monkeypatch):
+    manager = make_manager()
+    calls = []
+    monkeypatch.setattr(manager, "_run_ipmi_command", lambda args, **kwargs: calls.append(args) or "ok")
+
+    assert manager.set_third_party_pcie_cooling_response(False) is True
+    assert calls[-1] == ["0x30", "0xce", "0x00", "0x16", "0x05", "0x00", "0x00", "0x00",
+                         "0x05", "0x00", "0x01", "0x00", "0x00"]
+
+    assert manager.set_third_party_pcie_cooling_response(True) is True
+    assert calls[-1][-3:] == ["0x00", "0x00", "0x00"]
+
+
+def test_refusal_codes_disable_fan_control_until_something_was_accepted():
+    manager = make_manager()
+    manager.last_stderr = "Unable to send RAW command (channel=0x0 netfn=0x30 lun=0x0 cmd=0x30 rsp=0xd4): Insufficient privilege level"
+    assert manager._is_fan_control_refusal() is True
+
+    manager.fan_control_ever_accepted = True
+    assert manager._is_fan_control_refusal() is False
+
+
+def test_failed_speed_command_hands_fans_back_to_dell(monkeypatch):
+    manager = make_manager()
+    manager._log = lambda *args, **kwargs: None
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    calls = []
+    replies = iter(["ok", None, "ok"])
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return next(replies)
+
+    monkeypatch.setattr(manager, "_run_ipmi_command", fake_run)
+    assert manager.apply_user_fan_control_profile(30) is None
+    assert calls[0] == ["0x30", "0x30", "0x01", "0x00"]
+    assert calls[1] == ["0x30", "0x30", "0x02", "0xff", "0x1e"]
+    assert calls[2] == ["0x30", "0x30", "0x01", "0x01"]  # Dell auto hand-back
+
+
+def test_firmware_version_parsed(monkeypatch):
+    manager = make_manager()
+    monkeypatch.setattr(manager, "_run_ipmi_command",
+                        lambda *args, **kwargs: "Firmware Revision : 2.86.45.45\n")
+    assert manager.get_firmware_version() == "2.86.45.45"
+
+
+def test_serial_number_parsed_from_fru(monkeypatch):
+    manager = make_manager()
+    fru = "Product Manufacturer : DELL\nProduct Name : PowerEdge T430\nProduct Serial : ABC1234\n"
+    monkeypatch.setattr(manager, "_run_ipmi_command", lambda *args, **kwargs: fru)
+    info = manager.get_server_model_info()
+    assert info["model"] == "PowerEdge T430"
+    assert info["serial"] == "ABC1234"
+
+
+def test_implausible_temperature_is_ignored():
+    sdr = "CPU1 Temp | 01h | ok | 3.1 | 255 degrees C\n" \
+          "CPU2 Temp | 02h | ok | 3.2 | 47 degrees C\n"
+    assert make_manager().parse_temperatures(sdr)["cpu_temps"] == [47]
+
+
+def test_stable_refusal_helpers_are_defined():
+    stable_mod._FAN_CONTROL_REFUSED = False
+    stable_mod._FAN_CONTROL_EVER_ACCEPTED = False
+    stable_mod._LAST_STDERR = "Unable to send RAW command ... rsp=0xd4"
+    assert stable_mod._is_fan_control_refusal() is True
+    stable_mod._note_fan_control_refusal()
+    assert stable_mod.is_fan_control_refused() is True
+    # reset module state for any later test
+    stable_mod._FAN_CONTROL_REFUSED = False
+    stable_mod._LAST_STDERR = ""

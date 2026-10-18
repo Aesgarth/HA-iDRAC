@@ -1,7 +1,7 @@
 # HA-iDRAC/ha-idrac-controller-dev/config.yaml
 
 name: "HA iDRAC Controller BETA"
-version: "0.1.0-dev.14" # Incremented version
+version: "0.1.0-dev.15" # Incremented version
 slug: "ha_idrac_controller_development"
 description: "Control Dell iDRAC fan speeds and monitor server health in Home Assistant. Development Version. Not for production use."
 arch:
@@ -9,7 +9,7 @@ arch:
   - "amd64"
 init: false
 boot: "auto"
-watchdog: true
+watchdog: "http://[HOST]:[PORT:8099]/health"
 
 ingress: true
 ingress_port: 8099

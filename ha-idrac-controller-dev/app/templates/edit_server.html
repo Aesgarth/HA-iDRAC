@@ -25,6 +25,13 @@
                             <option value="false" {% if not server.fan_control_enabled %}selected{% endif %}>Disabled (Monitor Only)</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label for="disable_pcie_cooling_response">Third-party PCIe cooling</label>
+                        <select id="disable_pcie_cooling_response" name="disable_pcie_cooling_response">
+                            <option value="false" {% if not server.disable_pcie_cooling_response %}selected{% endif %}>Dell default (recommended)</option>
+                            <option value="true" {% if server.disable_pcie_cooling_response %}selected{% endif %}>Disabled (quieter with non-Dell cards)</option>
+                        </select>
+                    </div>
                 </div>
 
                 <hr>
@@ -41,9 +48,9 @@
                 <div id="simple-mode" class="fan-mode-section">
                     <h3>Simple Thresholds</h3>
                     <div class="form-grid">
-                        <div class="form-group"><label>Base Fan Speed (%)</label><input type="number" name="base_fan_speed_percent" value="{{ server.base_fan_speed_percent }}" min="0" max="100"></div>
+                        <div class="form-group"><label>Base Fan Speed (%)</label><input type="number" name="base_fan_speed_percent" value="{{ server.base_fan_speed_percent }}" min="5" max="100"></div>
                         <div class="form-group"><label>Low Temp Threshold (°C)</label><input type="number" name="low_temp_threshold" value="{{ server.low_temp_threshold }}" min="0" max="100"></div>
-                        <div class="form-group"><label>High Temp Fan Speed (%)</label><input type="number" name="high_temp_fan_speed_percent" value="{{ server.high_temp_fan_speed_percent }}" min="0" max="100"></div>
+                        <div class="form-group"><label>High Temp Fan Speed (%)</label><input type="number" name="high_temp_fan_speed_percent" value="{{ server.high_temp_fan_speed_percent }}" min="5" max="100"></div>
                         <div class="form-group"><label>Critical Temp Threshold (°C)</label><input type="number" name="critical_temp_threshold" value="{{ server.critical_temp_threshold }}" min="0" max="100"></div>
                     </div>
                 </div>

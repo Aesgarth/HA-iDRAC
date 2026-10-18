@@ -29,7 +29,7 @@ This add-on connects to your server's iDRAC interface using IPMI to:
     * (Future/Optional) Configure an advanced multi-point fan curve.
 * **Configurable:** Set iDRAC credentials, fan thresholds, temperature units, and MQTT details via the Home Assistant add-on configuration panel.
 
-## Changes in this fork (0.1.3)
+## Changes in this fork (0.1.4)
 
 * CPU temperatures are also found on 13G servers (`CPU1 Temp`/`CPU2 Temp`) —
   without this the add-on fell back to Dell auto on every cycle and never
@@ -39,6 +39,11 @@ This add-on connects to your server's iDRAC interface using IPMI to:
 * The iDRAC password is passed with `ipmitool -E`/`IPMI_PASSWORD` instead of
   appearing in the process list.
 * Watchdog enabled so Supervisor restarts the add-on if it exits.
+* Inlet/exhaust sensors are matched at the start of the name, so a
+  `PSU1 Inlet Temp` reading cannot replace the chassis inlet.
+* A refused fan command (0xc1/0xd4/0xd5) is detected once and monitoring
+  continues; a failed speed write hands the fans back to Dell auto.
+* Contradictory thresholds are corrected with a warning.
 
 ---
 

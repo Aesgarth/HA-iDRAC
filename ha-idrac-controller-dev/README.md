@@ -38,6 +38,30 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
     * A dedicated "Manage Servers" page to add, edit, and delete servers and configure their fan control settings.
 * **MQTT Auto-Discovery:** Automatically creates and configures all entities in Home Assistant.
 
+## Changes in this fork (0.1.0-dev.15)
+
+* CPU temperature parsing uses the IPMI processor entity (`3.x`), so both
+  `CPU1 Temp` (13G/iDRAC 8) and `Temp` (12G/iDRAC 7) are found.
+* Inlet/exhaust matching is anchored to the start of the sensor name, so
+  `PSU1 Inlet Temp` cannot replace the chassis inlet reading.
+* 2 °C hysteresis on the base/high and critical thresholds; speeds below 5 %
+  are clamped to 5 %.
+* If the manual-mode command lands but the speed command fails, the fans are
+  handed back to Dell auto instead of being pinned at the previous speed.
+* A server that refuses fan control (0xc1/0xd4/0xd5 — iDRAC 9/10 or an account
+  below Administrator) is detected once, fan control is disabled and
+  monitoring continues.
+* Optional per-server **Third-party PCIe cooling** setting (12G/13G OEM
+  command); restored on shutdown.
+* MQTT device gets `sw_version` (iDRAC firmware) and `serial_number` (service
+  tag) from the server.
+* Contradictory thresholds are corrected with a warning; implausible
+  temperatures outside -20..125 °C are ignored.
+* MQTT outages no longer stop a worker; passwords are passed with `ipmitool -E`;
+  the Supervisor watchdog is enabled.
+
+---
+
 ## <font color="orange">⚠️ Important Note for Testers ⚠️</font>
 * This version is for active development. Please report any issues or bugs you encounter.
 * **Closely monitor your server's temperatures after configuring and enabling fan control.**

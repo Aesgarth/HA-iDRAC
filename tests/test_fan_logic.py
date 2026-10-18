@@ -37,3 +37,23 @@ def test_fan_speeds_are_clamped_to_safe_range():
     assert fan_logic.clamp_speed(20) == 20
     assert fan_logic.clamp_speed(150) == 100
     assert fan_logic.clamp_speed("nonsense") == 5
+
+
+def test_validate_fan_config_corrects_inverted_thresholds():
+    result = fan_logic.validate_fan_config(70, 60, 20, 50)
+    assert result["critical"] == 71
+    assert result["warnings"]
+
+
+def test_validate_fan_config_corrects_high_below_base():
+    result = fan_logic.validate_fan_config(45, 65, 60, 40)
+    assert result["base"] == 60
+    assert result["high"] == 60
+    assert result["warnings"]
+
+
+def test_validate_fan_config_clamps_speeds():
+    result = fan_logic.validate_fan_config(45, 65, 0, 150)
+    assert result["base"] == 5
+    assert result["high"] == 100
+    assert result["warnings"] == []

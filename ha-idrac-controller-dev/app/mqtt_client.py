@@ -42,7 +42,8 @@ class MqttClient:
         if self.username:
             self.client.username_pw_set(self.username, self.password)
 
-    def set_device_info(self, server_alias, manufacturer, model, ip_address):
+    def set_device_info(self, server_alias, manufacturer, model, ip_address,
+                        serial_number=None, sw_version=None):
         safe_alias = re.sub(r'[^a-zA-Z0-9_-]+', '_', server_alias)
         self.base_topic = f"ha_idrac_controller/{safe_alias}"
         self.availability_topic = f"{self.base_topic}/status"
@@ -53,6 +54,10 @@ class MqttClient:
             "manufacturer": manufacturer or "DELL",
             "configuration_url": f"http://{ip_address}" if ip_address else None,
         }
+        if serial_number:
+            self.device_info_dict["serial_number"] = serial_number
+        if sw_version:
+            self.device_info_dict["sw_version"] = sw_version
         self._log("info", f"Device info for MQTT discovery set for '{server_alias}'")
 
     def on_connect(self, client, userdata, flags, rc):

@@ -47,8 +47,15 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label for="disable_pcie_cooling_response">Third-party PCIe cooling</label>
+                    <select id="disable_pcie_cooling_response" name="disable_pcie_cooling_response">
+                        <option value="false" selected>Dell default (recommended)</option>
+                        <option value="true">Disabled (quieter with non-Dell cards)</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="base_fan_speed_percent">Base Fan Speed (%)</label>
-                    <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent" value="{{ defaults.base_fan_speed_percent }}" min="0" max="100">
+                    <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent" value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">
                 </div>
                 <div class="form-group">
                     <label for="low_temp_threshold">Low Temp Threshold (°C)</label>
@@ -56,7 +63,7 @@
                 </div>
                 <div class="form-group">
                     <label for="high_temp_fan_speed_percent">High Temp Fan Speed (%)</label>
-                    <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent" value="{{ defaults.high_temp_fan_speed_percent }}" min="0" max="100">
+                    <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent" value="{{ defaults.high_temp_fan_speed_percent }}" min="5" max="100">
                 </div>
                  <div class="form-group">
                     <label for="critical_temp_threshold">Critical Temp Threshold (°C)</label>

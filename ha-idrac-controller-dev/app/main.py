@@ -6,7 +6,7 @@ import signal
 import threading
 import time
 
-from .fan_logic import SimpleFanState, clamp_speed
+from .fan_logic import SimpleFanState, clamp_speed, validate_fan_config
 from .ipmi_manager import IPMIManager
 from .mqtt_client import MqttClient
 from .pid_controller import PIDController
@@ -54,6 +54,14 @@ class ServerWorker:
         self.server_info = {}
         self.discovered_sensors = set()
         self._next_mqtt_attempt = 0.0
+        self._pcie_response_disabled = False
+        self.alive = True
+        self.fan_cfg = validate_fan_config(
+            self.config.get('low_temp_threshold', 45),
+            self.config.get('critical_temp_threshold', 65),
+            self.config.get('base_fan_speed_percent', 20),
+            self.config.get('high_temp_fan_speed_percent', 50),
+        )
 
     def _log(self, level, message):
         print(f"[{level.upper()}] [{self.alias}] {message}", flush=True)
@@ -92,6 +100,22 @@ class ServerWorker:
         model_data = self.ipmi.get_server_model_info()
         if model_data:
             self.server_info.update(model_data)
+        firmware = self.ipmi.get_firmware_version()
+        if firmware:
+            self.server_info["firmware"] = firmware
+            self._log("info", f"iDRAC firmware version: {firmware}")
+
+        for warning in self.fan_cfg["warnings"]:
+            self._log("warning", warning)
+        self._log("info", f"Fan profile: base {self.fan_cfg['base']}%, high {self.fan_cfg['high']}% at "
+                           f"{self.fan_cfg['low']} C, Dell auto at {self.fan_cfg['critical']} C")
+
+        if self.config.get("disable_pcie_cooling_response") and self.config.get('fan_control_enabled', True):
+            if self.ipmi.set_third_party_pcie_cooling_response(enabled=False):
+                self._pcie_response_disabled = True
+            else:
+                self._log("warning", "This server did not accept the third-party PCIe cooling-response "
+                                     "command; leaving that setting unchanged.")
 
         self.mqtt.configure_broker(
             self.global_opts["mqtt_host"], self.global_opts["mqtt_port"],
@@ -103,6 +127,8 @@ class ServerWorker:
             manufacturer=self.server_info.get("manufacturer"),
             model=self.server_info.get("model"),
             ip_address=self.config.get("idrac_ip"),
+            serial_number=self.server_info.get("serial"),
+            sw_version=self.server_info.get("firmware"),
         )
         self.mqtt.on_connect_callback = self._on_mqtt_connected
 
@@ -125,6 +151,7 @@ class ServerWorker:
             # Runs on SIGTERM as well as on an unexpected exception, so the
             # fans do not stay in manual mode after the add-on stops.
             self.cleanup()
+            self.alive = False
 
     def _run_loop(self):
         while self.running and running:
@@ -158,12 +185,14 @@ class ServerWorker:
             if not self.config.get('fan_control_enabled', True):
                 self._log("info", "Fan control is disabled for this server; leaving the iDRAC fan settings untouched.")
                 target_fan_speed = "Monitor only"
+            elif self.ipmi.fan_control_refused:
+                target_fan_speed = "Dell Auto (refused)"
             elif hottest_cpu is None:
                 self._log("warning", "No CPU temperature sensor found; handing fans back to the iDRAC for safety.")
                 self.ipmi.apply_dell_fan_control_profile()
                 target_fan_speed = "Dell Auto (no CPU sensor)"
             else:
-                crit_thresh = self.config.get('critical_temp_threshold', 65)
+                crit_thresh = self.fan_cfg["critical"]
                 if self.fan_state.should_use_auto(hottest_cpu, crit_thresh):
                     self.ipmi.apply_dell_fan_control_profile()
                     target_fan_speed = "Dell Auto"
@@ -171,21 +200,23 @@ class ServerWorker:
                     fan_mode = self.config.get('fan_mode', 'simple')
 
                     if fan_mode == 'simple':
-                        low_thresh = self.config.get('low_temp_threshold', 45)
+                        low_thresh = self.fan_cfg["low"]
                         target_fan_speed = self.fan_state.simple_speed(
                             hottest_cpu,
                             low_thresh,
-                            self.config.get('base_fan_speed_percent', 20),
-                            self.config.get('high_temp_fan_speed_percent', 50),
+                            self.fan_cfg["base"],
+                            self.fan_cfg["high"],
                         )
-                        self.ipmi.apply_user_fan_control_profile(target_fan_speed)
+                        if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
+                            target_fan_speed = "Dell Auto (fan command failed)"
 
                     elif fan_mode == 'target':
-                        base_fan = self.config.get('base_fan_speed_percent', 20)
+                        base_fan = self.fan_cfg["base"]
                         speed = self.pid.update(hottest_cpu, base_fan)
                         if speed is not None:
                             target_fan_speed = clamp_speed(speed, minimum=15)
-                            self.ipmi.apply_user_fan_control_profile(target_fan_speed)
+                            if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
+                                target_fan_speed = "Dell Auto (fan command failed)"
 
                     elif fan_mode == 'curve':
                         fan_curve = self.config.get('fan_curve', [])
@@ -207,7 +238,8 @@ class ServerWorker:
                                          if temp_range > 0 else lower['speed'])
 
                             target_fan_speed = clamp_speed(speed)
-                            self.ipmi.apply_user_fan_control_profile(target_fan_speed)
+                            if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
+                                target_fan_speed = "Dell Auto (fan command failed)"
 
             status_data = {
                 "hottest_cpu_temp": hottest_cpu,
@@ -296,6 +328,11 @@ class ServerWorker:
         else:
             self._log("info", "Worker shutting down with fan control disabled; leaving iDRAC fan settings untouched.")
 
+        if self._pcie_response_disabled:
+            self._log("info", "Restoring Dell default third-party PCIe cooling response.")
+            if not self.ipmi.set_third_party_pcie_cooling_response(enabled=True):
+                self._log("warning", "Could not restore the third-party PCIe cooling response; it is still disabled.")
+
         if self.mqtt.is_connected:
             self.mqtt.disconnect()
 
@@ -357,6 +394,11 @@ if __name__ == "__main__":
             thread = threading.Thread(target=worker.run, daemon=True)
             threads.append(thread)
             thread.start()
+
+    # Supervisor watchdog endpoint: 503 only if every configured worker has
+    # died, not when the iDRAC/MQTT is merely unreachable (the worker stays
+    # alive and keeps retrying in that case).
+    web_server.set_health_check(lambda: not worker_instances or any(w.alive for w in worker_instances))
 
     try:
         while running:

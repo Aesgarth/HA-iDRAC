@@ -16,6 +16,7 @@ SERVERS_CONFIG_FILE = "/data/servers_config.json"
 status_lock = None
 config_lock = threading.Lock()
 global_config = {}
+health_check = None
 
 
 # --- Helper functions ---
@@ -61,7 +62,18 @@ def load_all_servers_status():
     return []
 
 
+def set_health_check(callback):
+    global health_check
+    health_check = callback
+
+
 # --- Routes ---
+@app.route('/health')
+def health():
+    healthy = health_check() if health_check else True
+    return ("ok" if healthy else "unhealthy"), (200 if healthy else 503)
+
+
 @app.route('/')
 def index():
     all_statuses = load_all_servers_status()
@@ -93,6 +105,7 @@ def add_server():
         "idrac_password": request.form.get('idrac_password') or "",
         "enabled": True,
         "fan_control_enabled": request.form.get('fan_control_enabled') == 'true',
+        "disable_pcie_cooling_response": request.form.get('disable_pcie_cooling_response') == 'true',
         "fan_mode": request.form.get('fan_mode') or "simple",
         "base_fan_speed_percent": _int_field(request.form, 'base_fan_speed_percent', 20),
         "low_temp_threshold": _int_field(request.form, 'low_temp_threshold', 45),
@@ -114,6 +127,7 @@ def edit_server_form(alias):
         server_to_edit.setdefault('pid_config', {})
         server_to_edit.setdefault('target_temp', 55)
         server_to_edit.setdefault('fan_control_enabled', True)
+        server_to_edit.setdefault('disable_pcie_cooling_response', False)
         return render_template('edit_server.html', server=server_to_edit)
     flash(f"Server '{alias}' not found.", "error")
     return redirect('servers')
@@ -134,6 +148,7 @@ def update_server(alias):
         server_to_update['idrac_password'] = new_password
     server_to_update['enabled'] = request.form.get('enabled') == 'true'
     server_to_update['fan_control_enabled'] = request.form.get('fan_control_enabled') == 'true'
+    server_to_update['disable_pcie_cooling_response'] = request.form.get('disable_pcie_cooling_response') == 'true'
 
     server_to_update['fan_mode'] = request.form.get('fan_mode') or 'simple'
 

@@ -6,6 +6,7 @@
       "idrac_password": "YOUR_IDRAC_PASSWORD_HERE",
       "enabled": true,
       "fan_control_enabled": true,
+      "disable_pcie_cooling_response": false,
       "fan_mode": "simple",
       "base_fan_speed_percent": 20,
       "low_temp_threshold": 45,

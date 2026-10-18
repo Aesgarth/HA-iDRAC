@@ -121,8 +121,8 @@ def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
         )
 
     server_info["cpu_generic_temp_pattern"] = r"(?:^Temp$|CPU\s?\d)"
-    server_info["inlet_temp_name_pattern"] = r"Inlet Temp"
-    server_info["exhaust_temp_name_pattern"] = r"Exhaust Temp"
+    server_info["inlet_temp_name_pattern"] = r"^Inlet Temp\b"
+    server_info["exhaust_temp_name_pattern"] = r"^Exhaust Temp\b"
     print(f"[{log_level.upper()}] Using temp patterns: CPU_generic='{server_info['cpu_generic_temp_pattern']}', Inlet='{server_info['inlet_temp_name_pattern']}', Exhaust='{server_info['exhaust_temp_name_pattern']}'", flush=True)
 
     app_config = web_server.load_app_config()
@@ -137,6 +137,17 @@ def load_and_configure(mqtt_handler): # Pass mqtt_handler to set device_info
         addon_options["low_temp_threshold_c"] = float(addon_options["low_temp_threshold"])
         addon_options["critical_temp_threshold_c"] = float(addon_options["critical_temp_threshold"])
         print(f"[{log_level.upper()}] Temp thresholds (C input): Low={addon_options['low_temp_threshold_c']}C, Critical={addon_options['critical_temp_threshold_c']}C", flush=True)
+
+    if addon_options["critical_temp_threshold_c"] <= addon_options["low_temp_threshold_c"]:
+        addon_options["critical_temp_threshold_c"] = addon_options["low_temp_threshold_c"] + 1
+        print("[WARNING] critical_temp_threshold must be above low_temp_threshold; "
+              f"using {addon_options['critical_temp_threshold_c']}C.", flush=True)
+    addon_options["base_fan_speed_percent"] = max(5, min(100, addon_options["base_fan_speed_percent"]))
+    addon_options["high_temp_fan_speed_percent"] = max(5, min(100, addon_options["high_temp_fan_speed_percent"]))
+    if addon_options["high_temp_fan_speed_percent"] < addon_options["base_fan_speed_percent"]:
+        addon_options["high_temp_fan_speed_percent"] = addon_options["base_fan_speed_percent"]
+        print("[WARNING] high_temp_fan_speed_percent must be at least base_fan_speed_percent; "
+              f"using {addon_options['high_temp_fan_speed_percent']}%.", flush=True)
 
 
 def main_control_loop(mqtt_handler):
@@ -245,7 +256,9 @@ def main_control_loop(mqtt_handler):
 
             # --- Fan Control Logic ---
             target_fan_speed_display = "N/A"
-            if hottest_cpu_temp_c is None:
+            if ipmi_manager.is_fan_control_refused():
+                target_fan_speed_display = "Dell Auto (refused)"
+            elif hottest_cpu_temp_c is None:
                 print(f"[WARNING] Hottest CPU temp N/A. Applying Dell auto fans for safety.", flush=True)
                 ipmi_manager.apply_dell_fan_control_profile()
                 target_fan_speed_display = "Dell Auto (Safety)"
@@ -263,8 +276,10 @@ def main_control_loop(mqtt_handler):
                         addon_options["high_temp_fan_speed_percent"],
                     )
                     print(f"[{log_level.upper()}] CPU ({hottest_cpu_temp_c}°C, low {low_thresh_c}°C). Fan: {target_fan_speed_val}%", flush=True)
-                    ipmi_manager.apply_user_fan_control_profile(target_fan_speed_val)
-                    target_fan_speed_display = target_fan_speed_val
+                    if ipmi_manager.apply_user_fan_control_profile(target_fan_speed_val) is None:
+                        target_fan_speed_display = "Dell Auto (fan command failed)"
+                    else:
+                        target_fan_speed_display = target_fan_speed_val
 
             # --- Update Shared Status File for Web UI ---
             current_parsed_status_for_file = {

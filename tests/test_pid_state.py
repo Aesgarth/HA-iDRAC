@@ -7,8 +7,11 @@ from unittest.mock import MagicMock
 
 # Mock optional dependencies so tests run in plain environments without Flask or Paho
 for mod in ["flask", "markupsafe", "paho", "paho.mqtt", "paho.mqtt.client"]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+    try:
+        __import__(mod)
+    except ModuleNotFoundError:
+        if mod not in sys.modules:
+            sys.modules[mod] = MagicMock()
 
 dev_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ha-idrac-controller-dev"))
 if dev_dir not in sys.path:

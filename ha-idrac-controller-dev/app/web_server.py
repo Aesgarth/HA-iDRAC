@@ -93,10 +93,10 @@ def add_server():
     new_alias = (request.form.get('alias') or "").strip()
     if not new_alias:
         flash("Server alias is required.", "error")
-        return redirect('servers')
+        return redirect('../servers')
     if any(s['alias'] == new_alias for s in servers):
         flash(f"Server alias '{new_alias}' already exists.", "error")
-        return redirect('servers')
+        return redirect('../servers')
 
     new_server = {
         "alias": new_alias,
@@ -114,7 +114,7 @@ def add_server():
     }
     servers.append(new_server)
     save_servers_config(servers)
-    return redirect('servers')
+    return redirect('../servers')
 
 
 @app.route('/servers/edit/<alias>')
@@ -130,7 +130,7 @@ def edit_server_form(alias):
         server_to_edit.setdefault('disable_pcie_cooling_response', False)
         return render_template('edit_server.html', server=server_to_edit)
     flash(f"Server '{alias}' not found.", "error")
-    return redirect('servers')
+    return redirect('../../servers')
 
 
 @app.route('/servers/update/<alias>', methods=['POST'])
@@ -191,7 +191,7 @@ def delete_server(alias):
         save_servers_config(servers_to_keep)
     else:
         flash(f"Server '{alias}' not found.", "error")
-    return redirect('../servers')
+    return redirect('../../servers')
 
 
 def run_web_server(port, status_file_path, lock):

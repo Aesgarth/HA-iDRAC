@@ -9,6 +9,7 @@ arch:
   - "amd64"
 init: false
 boot: "auto"
+timeout: 60
 watchdog: "http://[HOST]:[PORT:8099]/health"
 
 ingress: true

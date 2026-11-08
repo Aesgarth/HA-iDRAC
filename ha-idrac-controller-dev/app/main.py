@@ -405,13 +405,19 @@ if __name__ == "__main__":
             with status_lock:
                 with open(STATUS_FILE, 'w') as f:
                     json.dump(list(ALL_SERVERS_STATUS.values()), f, indent=4)
-            time.sleep(2)
+            deadline = time.time() + 2
+            while time.time() < deadline and running:
+                time.sleep(0.2)
     except KeyboardInterrupt:
         graceful_shutdown(None, None)
 
     print("[MAIN] Waiting for all server threads to terminate...", flush=True)
     for worker in worker_instances:
         worker.stop()
-    for thread in threads:
-        thread.join(timeout=1)
+    deadline = time.time() + 50.0
+    for worker, thread in zip(worker_instances, threads):
+        remaining = max(0.0, deadline - time.time())
+        thread.join(timeout=remaining)
+        if thread.is_alive():
+            print(f"[WARNING] [{worker.alias}] Worker thread did not terminate within shutdown deadline.", flush=True)
     print("[MAIN] ===== HA iDRAC Controller Stopped =====", flush=True)

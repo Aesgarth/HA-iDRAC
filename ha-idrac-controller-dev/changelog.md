@@ -22,6 +22,7 @@
 * 🩺 **Health**: Supervisor watchdog now probes `/health`, which fails only when
   every server worker has died — an unreachable iDRAC or MQTT broker does not
   trigger restart loops.
+* 🛑 **Shutdown**: Server worker threads are joined against a shared 50-second deadline on shutdown so fan-revert cleanup completes before exit; configured add-on stop timeout to 60s.
 * ✅ **Tests**: 25 tests now cover the new refusal, cooling-response, firmware,
   serial and validation paths.
 

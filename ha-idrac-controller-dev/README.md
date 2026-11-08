@@ -38,6 +38,30 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
     * A dedicated "Manage Servers" page to add, edit, and delete servers and configure their fan control settings.
 * **MQTT Auto-Discovery:** Automatically creates and configures all entities in Home Assistant.
 
+## Recent Improvements (0.1.0-dev.15)
+
+* CPU temperature parsing uses the IPMI processor entity (`3.x`), so both
+  `CPU1 Temp` (13G/iDRAC 8) and `Temp` (12G/iDRAC 7) are found.
+* Inlet/exhaust matching is anchored to the start of the sensor name, so
+  `PSU1 Inlet Temp` cannot replace the chassis inlet reading.
+* 2 °C hysteresis on the base/high and critical thresholds; speeds below 5 %
+  are clamped to 5 %.
+* If the manual-mode command lands but the speed command fails, the fans are
+  handed back to Dell auto instead of being pinned at the previous speed.
+* A server that refuses fan control (0xc1/0xd4/0xd5 — iDRAC 9/10 or an account
+  below Administrator) is detected once, fan control is disabled and
+  monitoring continues.
+* Optional per-server **Third-party PCIe cooling** setting (12G/13G OEM
+  command); restored on shutdown.
+* MQTT device gets `sw_version` (iDRAC firmware) and `serial_number` (service
+  tag) from the server.
+* Contradictory thresholds are corrected with a warning; implausible
+  temperatures outside -20..125 °C are ignored.
+* MQTT outages no longer stop a worker; passwords are passed with `ipmitool -E`;
+  the Supervisor watchdog is enabled.
+
+---
+
 ## <font color="orange">⚠️ Important Note for Testers ⚠️</font>
 * This version is for active development. Please report any issues or bugs you encounter.
 * **Closely monitor your server's temperatures after configuring and enabling fan control.**
@@ -45,7 +69,8 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
 
 ## Prerequisites
 
-1.  **Dell PowerEdge Server with iDRAC:** The add-on uses IPMI, which is available on most Dell servers (iDRAC 7, 8, 9+ should work). Tested on an R720 with iDRAC7.
+1.  **Dell PowerEdge Server with iDRAC 7 or 8:** The add-on uses IPMI. 12th-generation (iDRAC 7, e.g. R720) and 13th-generation (iDRAC 8, e.g. **T430**, R630, R730) sensor layouts are supported and covered by unit tests. The original add-on was hardware-tested on an R720; 13G hardware verification is still pending, so check the log output on first start.
+    * For a T430, `ipmitool sdr type temperature` should show `CPU1 Temp`/`CPU2 Temp` on entities `3.1`/`3.2` plus `Inlet Temp`/`Exhaust Temp` on `7.x`.
 2.  **Network Connectivity:** Your Home Assistant instance must be able to reach each server's iDRAC IP address.
 3.  **IPMI over LAN Enabled in iDRAC:** This is crucial for the add-on to function.
     * Log in to your iDRAC's web interface.
@@ -64,7 +89,7 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
     * Click the **three-dots menu** (⋮) in the top right and select **Repositories**.
     * Paste the following URL and click **ADD**:
         ```
-        [https://github.com/Aesgarth/HA-iDRAC](https://github.com/Aesgarth/HA-iDRAC)
+        https://github.com/Aesgarth/HA-iDRAC
         ```
 2.  **Install the Add-on:**
     * Refresh the page. You should now see the "HA iDRAC Controller BETA" add-on in the store.

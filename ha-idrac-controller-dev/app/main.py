@@ -9,7 +9,7 @@ import time
 from .fan_logic import SimpleFanState, clamp_speed, validate_fan_config
 from .ipmi_manager import IPMIManager
 from .mqtt_client import MqttClient
-from .pid_controller import PIDController
+from .adaptive_pid import AdaptiveFanController
 from . import web_server
 
 # --- Global Variables ---
@@ -39,6 +39,24 @@ def save_pid_state(alias, pid_state, filepath=None):
         os.replace(temp_file, target)
 
 
+def delete_pid_state(alias, filepath=None):
+    target = filepath or PID_STATE_FILE
+    with pid_state_lock:
+        if not os.path.exists(target):
+            return
+        try:
+            with open(target, 'r') as f:
+                all_states = json.load(f)
+        except (IOError, json.JSONDecodeError):
+            return
+        if alias in all_states:
+            del all_states[alias]
+            temp_file = f"{target}.tmp.{threading.get_ident()}"
+            with open(temp_file, 'w') as f:
+                json.dump(all_states, f, indent=4)
+            os.replace(temp_file, target)
+
+
 # --- Graceful Shutdown ---
 def graceful_shutdown(signum, frame):
     global running
@@ -66,7 +84,22 @@ class ServerWorker:
             log_level=self.log_level,
         )
         self.mqtt = MqttClient(client_id=f"ha_idrac_{self.alias}")
-        self.pid = PIDController()
+        pid_config = self.config.get('pid_config', {})
+        target_temp = pid_config.get('target_temp')
+        if target_temp is None or target_temp == "":
+            target_temp = self.config.get('target_temp', 50)
+        min_speed = pid_config.get('min_speed', 15)
+        max_speed = pid_config.get('max_speed', 95)
+        deadband = pid_config.get('deadband', 0.75)
+        ti_seconds = pid_config.get('ti_seconds', 300.0)
+
+        self.pid = AdaptiveFanController(
+            setpoint=target_temp,
+            min_speed=min_speed,
+            max_speed=max_speed,
+            deadband=deadband,
+            ti_seconds=ti_seconds,
+        )
         self.fan_state = SimpleFanState()
 
         self.server_info = {}
@@ -101,9 +134,11 @@ class ServerWorker:
     def _initialize(self):
         self._log("info", "Initializing server worker...")
 
-        pid_config = self.config.get('pid_config', {})
-        self.pid.setpoint = pid_config.get('target_temp', 55)
-        self.pid.set_gains(pid_config.get('kp', 4.0), pid_config.get('ki', 0.2), pid_config.get('kd', 0.1))
+        fan_mode = self.config.get('fan_mode', 'simple')
+        check_interval = self.global_opts.get('check_interval_seconds', 60)
+        if fan_mode == 'target' and check_interval > 30:
+            self._log("warning", f"Target temperature mode works best with check_interval_seconds <= 30 "
+                                 f"(current: {check_interval}s) so the controller receives enough samples.")
 
         with pid_state_lock:
             if os.path.exists(PID_STATE_FILE):
@@ -112,7 +147,9 @@ class ServerWorker:
                         all_states = json.load(f)
                         if self.alias in all_states:
                             self.pid.load_state(all_states[self.alias])
-                            self._log("info", f"Loaded persistent PID state: integral={self.pid.integral}")
+                            self._log("info", f"Loaded persistent PID state: "
+                                             f"theta={[round(t, 4) for t in self.pid.theta]}, "
+                                             f"samples={self.pid.samples}")
                     except json.JSONDecodeError:
                         self._log("warning", "Could not decode PID state file.")
 
@@ -230,12 +267,30 @@ class ServerWorker:
                             target_fan_speed = "Dell Auto (fan command failed)"
 
                     elif fan_mode == 'target':
-                        base_fan = self.fan_cfg["base"]
-                        speed = self.pid.update(hottest_cpu, base_fan)
+                        inlet = temps.get('inlet_temp')
+                        speed = self.pid.update(hottest_cpu, inlet, power)
+                        feed_speed = self.pid._feedforward(
+                            inlet if inlet is not None else self.pid.DEFAULT_INLET_C,
+                            power if power is not None else self.pid.DEFAULT_POWER_W,
+                        )
+                        self._log(
+                            "debug",
+                            f"PID update: temp={hottest_cpu}°C, inlet={inlet}°C, power={power}W, "
+                            f"feedforward={feed_speed:.1f}%, trim={self.pid.trim:.2f}%, "
+                            f"theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}",
+                        )
                         if speed is not None:
-                            target_fan_speed = clamp_speed(speed, minimum=15)
+                            target_fan_speed = clamp_speed(
+                                speed,
+                                minimum=int(self.pid.min_speed),
+                                maximum=int(self.pid.max_speed),
+                            )
                             if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
                                 target_fan_speed = "Dell Auto (fan command failed)"
+                            else:
+                                self._last_target_fan_speed = target_fan_speed
+                        else:
+                            target_fan_speed = getattr(self, '_last_target_fan_speed', "Target (in deadband)")
 
                     elif fan_mode == 'curve':
                         fan_curve = self.config.get('fan_curve', [])
@@ -260,6 +315,13 @@ class ServerWorker:
                             if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
                                 target_fan_speed = "Dell Auto (fan command failed)"
 
+            fan_mode = self.config.get('fan_mode', 'simple')
+            pid_status = (
+                f"Learning ({self.pid.samples} samples)"
+                if self.pid.samples < 5
+                else "Adapted"
+            ) if fan_mode == 'target' else None
+
             status_data = {
                 "hottest_cpu_temp": hottest_cpu,
                 "inlet_temp": temps.get('inlet_temp'),
@@ -269,6 +331,7 @@ class ServerWorker:
                 "cpus": temps.get('cpu_temps', []),
                 "fans": fans,
                 "psus": psu_statuses,
+                "pid_status": pid_status,
             }
             with status_lock:
                 ALL_SERVERS_STATUS[self.alias] = {
@@ -283,6 +346,7 @@ class ServerWorker:
                     "cpu_temps_c": temps.get('cpu_temps', []),
                     "actual_fan_rpms": fans,
                     "psu_statuses": psu_statuses,
+                    "pid_status": pid_status,
                 }
 
             self._publish_mqtt_data(status_data)
@@ -356,7 +420,7 @@ class ServerWorker:
             self.mqtt.disconnect()
 
         save_pid_state(self.alias, self.pid.get_state())
-        self._log("info", f"Saved persistent PID state: integral={self.pid.integral}")
+        self._log("info", f"Saved persistent PID state: theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}")
 
     def stop(self):
         self.running = False

@@ -25,6 +25,7 @@
                         <strong>Target Fan Speed:</strong> 
                         {{ server.target_fan_speed_percent }}
                         {% if server.target_fan_speed_percent is number %}%{% endif %}
+                        {% if server.pid_status %}<br><small>{{ server.pid_status }}</small>{% endif %}
                     </div>
                 </div>
 

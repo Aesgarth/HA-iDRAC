@@ -20,11 +20,65 @@ health_check = None
 
 
 # --- Helper functions ---
-def _int_field(form, name, default):
+def _to_int(val, default):
+    if val is None or val == "":
+        return default
     try:
-        return int(form.get(name, default))
+        return int(val)
     except (TypeError, ValueError):
         return default
+
+
+def _to_float(val, default):
+    if val is None or val == "":
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_field(form, name, default):
+    return _to_int(form.get(name), default)
+
+
+def _float_field(form, name, default):
+    return _to_float(form.get(name), default)
+
+
+def parse_and_validate_pid_config(form):
+    target_val = form.get('target_temp') if form.get('target_temp') is not None else form.get('pid_target_temp')
+    target_temp = _to_int(target_val, 50)
+    target_temp = max(20, min(90, target_temp))
+
+    min_val = form.get('min_speed') if form.get('min_speed') is not None else form.get('pid_min_speed')
+    min_speed = _to_int(min_val, 15)
+    min_speed = max(5, min(100, min_speed))
+
+    max_val = form.get('max_speed') if form.get('max_speed') is not None else form.get('pid_max_speed')
+    max_speed = _to_int(max_val, 95)
+    max_speed = max(5, min(100, max_speed))
+
+    if max_speed < min_speed:
+        max_speed = min_speed
+
+    deadband_val = form.get('deadband') if form.get('deadband') is not None else form.get('pid_deadband')
+    deadband = _to_float(deadband_val, 0.75)
+    if deadband < 0:
+        deadband = 0.0
+
+    ti_val = form.get('ti_seconds') if form.get('ti_seconds') is not None else form.get('pid_ti_seconds')
+    ti_seconds = _to_float(ti_val, 300.0)
+    if ti_seconds <= 0:
+        ti_seconds = 300.0
+
+    return {
+        "target_temp": target_temp,
+        "min_speed": min_speed,
+        "max_speed": max_speed,
+        "deadband": deadband,
+        "ti_seconds": ti_seconds,
+    }
 
 
 def load_servers_config():
@@ -111,6 +165,8 @@ def add_server():
         "low_temp_threshold": _int_field(request.form, 'low_temp_threshold', 45),
         "high_temp_fan_speed_percent": _int_field(request.form, 'high_temp_fan_speed_percent', 50),
         "critical_temp_threshold": _int_field(request.form, 'critical_temp_threshold', 65),
+        "pid_config": parse_and_validate_pid_config(request.form),
+        "fan_curve": [],
     }
     servers.append(new_server)
     save_servers_config(servers)
@@ -124,8 +180,17 @@ def edit_server_form(alias):
     if server_to_edit:
         server_to_edit.setdefault('fan_mode', 'simple')
         server_to_edit.setdefault('fan_curve', [])
-        server_to_edit.setdefault('pid_config', {})
-        server_to_edit.setdefault('target_temp', 55)
+        pid_cfg = server_to_edit.setdefault('pid_config', {})
+        if pid_cfg.get('target_temp') is None or pid_cfg.get('target_temp') == "":
+            pid_cfg['target_temp'] = 50
+        if pid_cfg.get('min_speed') is None or pid_cfg.get('min_speed') == "":
+            pid_cfg['min_speed'] = 15
+        if pid_cfg.get('max_speed') is None or pid_cfg.get('max_speed') == "":
+            pid_cfg['max_speed'] = 95
+        if pid_cfg.get('deadband') is None or pid_cfg.get('deadband') == "":
+            pid_cfg['deadband'] = 0.75
+        if pid_cfg.get('ti_seconds') is None or pid_cfg.get('ti_seconds') == "":
+            pid_cfg['ti_seconds'] = 300.0
         server_to_edit.setdefault('fan_control_enabled', True)
         server_to_edit.setdefault('disable_pcie_cooling_response', False)
         return render_template('edit_server.html', server=server_to_edit)
@@ -157,12 +222,7 @@ def update_server(alias):
     server_to_update['high_temp_fan_speed_percent'] = _int_field(request.form, 'high_temp_fan_speed_percent', 50)
     server_to_update['critical_temp_threshold'] = _int_field(request.form, 'critical_temp_threshold', 65)
 
-    server_to_update['pid_config'] = {
-        "target_temp": _int_field(request.form, 'target_temp', 55),
-        "kp": float(request.form.get('pid_kp') or 4.0),
-        "ki": float(request.form.get('pid_ki') or 0.2),
-        "kd": float(request.form.get('pid_kd') or 0.1),
-    }
+    server_to_update['pid_config'] = parse_and_validate_pid_config(request.form)
 
     fan_curve = []
     i = 0
@@ -189,6 +249,15 @@ def delete_server(alias):
     servers_to_keep = [s for s in servers if s['alias'] != alias]
     if len(servers_to_keep) < len(servers):
         save_servers_config(servers_to_keep)
+        try:
+            from .main import delete_pid_state
+            delete_pid_state(alias)
+        except Exception:
+            try:
+                from app.main import delete_pid_state
+                delete_pid_state(alias)
+            except Exception:
+                pass
     else:
         flash(f"Server '{alias}' not found.", "error")
     return redirect('../../servers')

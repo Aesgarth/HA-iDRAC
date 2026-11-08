@@ -56,29 +56,39 @@
                 </div>
 
                 <div id="target-mode" class="fan-mode-section">
-                    <h3>Target Temperature (PID)</h3>
+                    <h3>Target Temperature (Adaptive)</h3>
                     <div class="form-grid">
                         <div class="form-group">
-                            <label>Target CPU Temp (°C)</label>
-                            <input type="number" name="target_temp" value="{{ server.pid_config.target_temp or 55 }}">
-                            <small>The controller will try to maintain this temperature.</small>
+                            <label for="target_temp">Target Temperature (°C)</label>
+                            <input type="number" id="target_temp" name="target_temp" value="{{ server.pid_config.target_temp if server.pid_config.target_temp is not none and server.pid_config.target_temp != '' else 50 }}" min="20" max="90" required>
+                            <small>The self-tuning controller will maintain this CPU temperature (20–90°C).</small>
                         </div>
                         <div class="form-group">
-                            <label>Proportional Gain (Kp)</label>
-                            <input type="number" name="pid_kp" value="{{ server.pid_config.kp or 4.0 }}" step="0.1">
-                            <small>How strongly it reacts to current error. (e.g., 4.0)</small>
+                            <label for="min_speed">Min Fan Speed (%)</label>
+                            <input type="number" id="min_speed" name="min_speed" value="{{ server.pid_config.min_speed if server.pid_config.min_speed is not none and server.pid_config.min_speed != '' else 15 }}" min="5" max="100">
+                            <small>Minimum fan speed limit (5–100%).</small>
                         </div>
                         <div class="form-group">
-                            <label>Integral Gain (Ki)</label>
-                            <input type="number" name="pid_ki" value="{{ server.pid_config.ki or 0.2 }}" step="0.01">
-                            <small>How much to factor in past errors. (e.g., 0.2)</small>
-                        </div>
-                        <div class="form-group">
-                            <label>Derivative Gain (Kd)</label>
-                            <input type="number" name="pid_kd" value="{{ server.pid_config.kd or 0.1 }}" step="0.01">
-                            <small>How much to predict future error. (e.g., 0.1)</small>
+                            <label for="max_speed">Max Fan Speed (%)</label>
+                            <input type="number" id="max_speed" name="max_speed" value="{{ server.pid_config.max_speed if server.pid_config.max_speed is not none and server.pid_config.max_speed != '' else 95 }}" min="5" max="100">
+                            <small>Maximum fan speed limit (5–100%).</small>
                         </div>
                     </div>
+                    <details style="margin-top: 1em;">
+                        <summary style="cursor: pointer; font-weight: bold;">Advanced Settings</summary>
+                        <div class="form-grid" style="margin-top: 1em;">
+                            <div class="form-group">
+                                <label for="deadband">Deadband (°C)</label>
+                                <input type="number" id="deadband" name="deadband" step="0.05" value="{{ server.pid_config.deadband if server.pid_config.deadband is not none and server.pid_config.deadband != '' else 0.75 }}" min="0">
+                                <small>Temperature error deadband to prevent hunting (default 0.75°C).</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="ti_seconds">Integral Time Constant Ti (seconds)</label>
+                                <input type="number" id="ti_seconds" name="ti_seconds" step="1" value="{{ server.pid_config.ti_seconds if server.pid_config.ti_seconds is not none and server.pid_config.ti_seconds != '' else 300 }}" min="1">
+                                <small>Integral time constant for trimming steady-state offset (default 300s).</small>
+                            </div>
+                        </div>
+                    </details>
                 </div>
 
                 <div id="curve-mode" class="fan-mode-section">

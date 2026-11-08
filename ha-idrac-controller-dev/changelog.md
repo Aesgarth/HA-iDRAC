@@ -1,3 +1,10 @@
+## 0.1.0-dev.17 - 2026-11-08
+
+* 🧠 **Adaptive Fan Controller**: Replaced fixed Kp/Ki/Kd PID controller with self-tuning `AdaptiveFanController` that learns server thermal resistance and uses feedforward with leaky integral trim.
+* ⚙️ **Settings**: Added target temperature (20–90°C), min/max fan speed (5–100%), and collapsible advanced settings (deadband, Ti integral time constant); removed Kp, Ki, and Kd fields.
+* 🐛 **Bug Fix**: Fixed zero-value handling in form parsing and template defaults so numeric 0/0.0 values are not overwritten by default fallbacks.
+* 📊 **Dashboard & State**: Added PID status display ("Learning" / "Adapted") under Target Fan Speed on the dashboard; learned parameters (`theta`, `cov`, `samples`) persist across restarts and are pruned upon server deletion.
+
 ## 0.1.0-dev.16 - 2026-11-08
 
 * 🛑 **Shutdown**: Server worker threads are joined against a shared 50-second deadline on shutdown so fan-revert cleanup completes before exit; configured add-on stop timeout to 60s.

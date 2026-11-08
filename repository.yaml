@@ -1,4 +1,4 @@
 # HA-iDRAC/repository.yaml
-name: "HA iDRAC Controller (T430/13G fork)"
-url: "https://github.com/sam2kb/HA-iDRAC"
-maintainer: "sam2kb"
+name: "Aesgarth's Custom iDRAC Add-on"
+url: "https://github.com/Aesgarth/HA-iDRAC"
+maintainer: "Aesgarth"

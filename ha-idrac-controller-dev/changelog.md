@@ -1,5 +1,6 @@
 ## 0.1.0-dev.15 - 2026-10-18
 
+* 🙏 **Credits**: Additional hardening, PCIe cooling response, and diagnostics contributed by @sam2kb.
 * 🐛 **Bug Fix**: Inlet/exhaust sensors are matched at the start of the sensor
   name, so `PSU1 Inlet Temp` can no longer replace the chassis inlet reading
   (same failure mode reported upstream in tigerblue77's controller).
@@ -26,6 +27,7 @@
 
 ## 0.1.0-dev.14 - 2026-10-18
 
+* 🙏 **Credits**: 13G/T430 support and hardening work contributed by @sam2kb.
 * 🐛 **Bug Fix (13G/iDRAC 8)**: CPU temperatures are now detected by IPMI
   processor entity (`3.x`), so `CPU1 Temp`/`CPU2 Temp` on T430/R630/R730 are
   found. Previously only a sensor literally named `Temp` (12G) matched and fan

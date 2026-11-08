@@ -29,7 +29,7 @@ This add-on connects to your server's iDRAC interface using IPMI to:
     * (Future/Optional) Configure an advanced multi-point fan curve.
 * **Configurable:** Set iDRAC credentials, fan thresholds, temperature units, and MQTT details via the Home Assistant add-on configuration panel.
 
-## Changes in this fork (0.1.4)
+## Recent Improvements (0.1.4)
 
 * CPU temperatures are also found on 13G servers (`CPU1 Temp`/`CPU2 Temp`) —
   without this the add-on fell back to Dell auto on every cycle and never
@@ -81,7 +81,7 @@ This add-on connects to your server's iDRAC interface using IPMI to:
     * Click the **three-dots menu** (⋮) in the top right corner and select **"Repositories"**.
     * In the "Manage add-on repositories" dialog, paste the following URL:
         ```
-        https://github.com/sam2kb/HA-iDRAC
+        https://github.com/Aesgarth/HA-iDRAC
         ```
     * Click **"ADD"** and then **"CLOSE"**.
 
@@ -170,7 +170,7 @@ If MQTT is configured correctly, the following entities will be automatically di
 
 ## Contributing / Reporting Issues
 
-Please open an issue on the [GitHub repository](https://github.com/sam2kb/HA-iDRAC/issues) for any bugs, feature requests, or questions.
+Please open an issue on the [GitHub repository](https://github.com/Aesgarth/HA-iDRAC/issues) for any bugs, feature requests, or questions.
 
 ## License
 

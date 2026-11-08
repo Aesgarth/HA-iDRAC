@@ -1,12 +1,11 @@
-# HA-iDRAC — iDRAC 7/8 (12G/13G) fork
+# HA-iDRAC — iDRAC 7/8 (12G/13G)
 
 Home Assistant add-ons for monitoring and controlling Dell PowerEdge servers
-through their iDRAC via IPMI. This is a fork of
-[Aesgarth/HA-iDRAC](https://github.com/Aesgarth/HA-iDRAC) with fixes for
-13th-generation servers (iDRAC 8, e.g. **T430**, R430, R630, R730) and for a
-number of robustness problems in the original add-ons.
+through their iDRAC via IPMI, with support for 12th- and 13th-generation
+servers (iDRAC 7/8, e.g. R720, **T430**, R430, R630, R730) and robust fan
+control and hardware monitoring.
 
-## What this fork changes
+## Key Features and Improvements
 
 - **13G CPU temperature sensors are found.** iDRAC 8 reports `CPU1 Temp` /
   `CPU2 Temp` (processor entities `3.x`); the original stable add-on only
@@ -61,10 +60,10 @@ number of robustness problems in the original add-ons.
      monitor-only mode, PSU + connectivity sensors, graceful shutdown button.
    - Recommended for T430/iDRAC 8 because it is the actively developed one.
 
-> Both add-ons use the same fan-control commands as the original project:
+> Both add-ons use the standard 12G/13G Dell fan-control sequence:
 > `raw 0x30 0x30 0x01 0x00` (manual) and `raw 0x30 0x30 0x02 0xff <pct>`.
-> These are the standard 12G/13G Dell sequence. Do not use this fork on
-> iDRAC 9 (14G+) without checking the raw commands for your firmware.
+> Do not use these add-ons on iDRAC 9 (14G+) without checking the raw commands
+> for your firmware.
 
 ## Installation
 
@@ -73,7 +72,7 @@ number of robustness problems in the original add-ons.
 3. Paste this URL (no markdown, no brackets):
 
    ```
-   https://github.com/sam2kb/HA-iDRAC
+   https://github.com/Aesgarth/HA-iDRAC
    ```
 
 4. Install **HA iDRAC Controller BETA** for a T430.
@@ -84,10 +83,9 @@ number of robustness problems in the original add-ons.
    fill in the MQTT settings, save, start the add-on, then add the server in
    the web UI (Manage Servers) and restart the add-on once.
 
-The original repository also defined a third add-on, `multi-server`, which was
-an older snapshot of the BETA code. It has been removed here. If you previously
-added the upstream repository, remove it before adding this one — the add-on
-slugs are the same, so keep only one of the two repositories in the store.
+The repository previously defined a third add-on, `multi-server`, which was
+an older snapshot of the BETA code and has been removed. If you were using
+`multi-server`, switch to the **HA iDRAC Controller BETA** add-on instead.
 
 ## Configuration notes
 
@@ -116,7 +114,7 @@ slugs are the same, so keep only one of the two repositories in the store.
   12G/13G. Some firmware does not accept it; the add-on logs that once and
   leaves the setting untouched. It is only applied when fan control is
   enabled.
-- iDRAC 9 / 14th generation and newer are not a target of this fork. The raw
+- iDRAC 9 / 14th generation and newer are not currently targeted. The raw
   fan commands and sensor layout differ.
 - A `SIGKILL`, OOM kill or host power loss cannot run the shutdown handler, so
   the iDRAC can stay in manual mode. The Supervisor watchdog restarts the
@@ -135,7 +133,11 @@ The tests run without an iDRAC and without Flask/paho installed; they cover
 12G/13G SDR parsing, fan RPM/power/PSU parsing and the hysteresis logic.
 GitHub Actions runs the same suite on every push.
 
+## Acknowledgements
+
+- **[sam2kb](https://github.com/sam2kb)** for the 13G/T430 support and hardening work ([PR #2](https://github.com/sam2kb/ha-idrac-controller-archive/pull/2)).
+- **[tigerblue77](https://github.com/tigerblue77/Dell_iDRAC_fan_controller_Docker)**, **[Breina](https://github.com/Breina/idrac_power_monitor)**, and **[rztw](https://github.com/rztw/dell-fans-ipmi-ha)** for ideas and reference implementations adopted from their projects.
+
 ## License
 
-MIT, same as the upstream project. Original work by
-[Aesgarth](https://github.com/Aesgarth/HA-iDRAC).
+MIT License. See [LICENSE](LICENSE) for details.

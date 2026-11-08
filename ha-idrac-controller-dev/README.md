@@ -38,7 +38,7 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
     * A dedicated "Manage Servers" page to add, edit, and delete servers and configure their fan control settings.
 * **MQTT Auto-Discovery:** Automatically creates and configures all entities in Home Assistant.
 
-## Changes in this fork (0.1.0-dev.15)
+## Recent Improvements (0.1.0-dev.15)
 
 * CPU temperature parsing uses the IPMI processor entity (`3.x`), so both
   `CPU1 Temp` (13G/iDRAC 8) and `Temp` (12G/iDRAC 7) are found.
@@ -89,7 +89,7 @@ This add-on connects to your servers' iDRAC interfaces using IPMI to:
     * Click the **three-dots menu** (⋮) in the top right and select **Repositories**.
     * Paste the following URL and click **ADD**:
         ```
-        https://github.com/sam2kb/HA-iDRAC
+        https://github.com/Aesgarth/HA-iDRAC
         ```
 2.  **Install the Add-on:**
     * Refresh the page. You should now see the "HA iDRAC Controller BETA" add-on in the store.
@@ -140,7 +140,7 @@ For each server, the add-on will create a new device in Home Assistant with the 
 
 ## Contributing / Reporting Issues
 
-This is a development version. Please report any bugs, issues, or feature suggestions by opening an issue on the [GitHub repository](https://github.com/sam2kb/HA-iDRAC/issues). Please provide logs and details about your server model if you encounter problems.
+This is a development version. Please report any bugs, issues, or feature suggestions by opening an issue on the [GitHub repository](https://github.com/Aesgarth/HA-iDRAC/issues). Please provide logs and details about your server model if you encounter problems.
 
 ## License
 

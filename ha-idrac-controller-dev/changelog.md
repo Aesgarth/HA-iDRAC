@@ -1,3 +1,9 @@
+## 0.1.0-dev.16 - 2026-11-08
+
+* 🛑 **Shutdown**: Server worker threads are joined against a shared 50-second deadline on shutdown so fan-revert cleanup completes before exit; configured add-on stop timeout to 60s.
+* 🔒 **Concurrency**: Protected PID state file read-modify-write with a mutex and atomic writes; atomic writes for status file to prevent race conditions during concurrent worker shutdown.
+* 🔗 **Repository**: Restored repository and issue links to Aesgarth/HA-iDRAC and added credits and acknowledgements for contributions.
+
 ## 0.1.0-dev.15 - 2026-10-18
 
 * 🙏 **Credits**: Additional hardening, PCIe cooling response, and diagnostics contributed by @sam2kb.
@@ -22,8 +28,6 @@
 * 🩺 **Health**: Supervisor watchdog now probes `/health`, which fails only when
   every server worker has died — an unreachable iDRAC or MQTT broker does not
   trigger restart loops.
-* 🛑 **Shutdown**: Server worker threads are joined against a shared 50-second deadline on shutdown so fan-revert cleanup completes before exit; configured add-on stop timeout to 60s.
-* 🔒 **Concurrency**: Protected PID state file read-modify-write with a mutex and atomic writes; atomic writes for status file to prevent race conditions during concurrent worker shutdown.
 * ✅ **Tests**: 25 tests now cover the new refusal, cooling-response, firmware,
   serial and validation paths.
 

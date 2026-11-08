@@ -16,9 +16,27 @@ from . import web_server
 running = True
 threads = []
 status_lock = threading.Lock()
+pid_state_lock = threading.Lock()
 ALL_SERVERS_STATUS = {}
 STATUS_FILE = "/data/current_status.json"
 PID_STATE_FILE = "/data/pid_states.json"
+
+
+def save_pid_state(alias, pid_state, filepath=None):
+    target = filepath or PID_STATE_FILE
+    with pid_state_lock:
+        all_states = {}
+        if os.path.exists(target):
+            try:
+                with open(target, 'r') as f:
+                    all_states = json.load(f)
+            except (IOError, json.JSONDecodeError):
+                all_states = {}
+        all_states[alias] = pid_state
+        temp_file = f"{target}.tmp.{threading.get_ident()}"
+        with open(temp_file, 'w') as f:
+            json.dump(all_states, f, indent=4)
+        os.replace(temp_file, target)
 
 
 # --- Graceful Shutdown ---
@@ -87,15 +105,16 @@ class ServerWorker:
         self.pid.setpoint = pid_config.get('target_temp', 55)
         self.pid.set_gains(pid_config.get('kp', 4.0), pid_config.get('ki', 0.2), pid_config.get('kd', 0.1))
 
-        if os.path.exists(PID_STATE_FILE):
-            with open(PID_STATE_FILE, 'r') as f:
-                try:
-                    all_states = json.load(f)
-                    if self.alias in all_states:
-                        self.pid.load_state(all_states[self.alias])
-                        self._log("info", f"Loaded persistent PID state: integral={self.pid.integral}")
-                except json.JSONDecodeError:
-                    self._log("warning", "Could not decode PID state file.")
+        with pid_state_lock:
+            if os.path.exists(PID_STATE_FILE):
+                with open(PID_STATE_FILE, 'r') as f:
+                    try:
+                        all_states = json.load(f)
+                        if self.alias in all_states:
+                            self.pid.load_state(all_states[self.alias])
+                            self._log("info", f"Loaded persistent PID state: integral={self.pid.integral}")
+                    except json.JSONDecodeError:
+                        self._log("warning", "Could not decode PID state file.")
 
         model_data = self.ipmi.get_server_model_info()
         if model_data:
@@ -336,17 +355,7 @@ class ServerWorker:
         if self.mqtt.is_connected:
             self.mqtt.disconnect()
 
-        if os.path.exists(PID_STATE_FILE):
-            try:
-                with open(PID_STATE_FILE, 'r') as f:
-                    all_states = json.load(f)
-            except (IOError, json.JSONDecodeError):
-                all_states = {}
-        else:
-            all_states = {}
-        all_states[self.alias] = self.pid.get_state()
-        with open(PID_STATE_FILE, 'w') as f:
-            json.dump(all_states, f, indent=4)
+        save_pid_state(self.alias, self.pid.get_state())
         self._log("info", f"Saved persistent PID state: integral={self.pid.integral}")
 
     def stop(self):
@@ -403,8 +412,10 @@ if __name__ == "__main__":
     try:
         while running:
             with status_lock:
-                with open(STATUS_FILE, 'w') as f:
+                temp_status_file = f"{STATUS_FILE}.tmp.{os.getpid()}"
+                with open(temp_status_file, 'w') as f:
                     json.dump(list(ALL_SERVERS_STATUS.values()), f, indent=4)
+                os.replace(temp_status_file, STATUS_FILE)
             deadline = time.time() + 2
             while time.time() < deadline and running:
                 time.sleep(0.2)

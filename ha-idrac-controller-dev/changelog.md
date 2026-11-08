@@ -23,6 +23,7 @@
   every server worker has died — an unreachable iDRAC or MQTT broker does not
   trigger restart loops.
 * 🛑 **Shutdown**: Server worker threads are joined against a shared 50-second deadline on shutdown so fan-revert cleanup completes before exit; configured add-on stop timeout to 60s.
+* 🔒 **Concurrency**: Protected PID state file read-modify-write with a mutex and atomic writes; atomic writes for status file to prevent race conditions during concurrent worker shutdown.
 * ✅ **Tests**: 25 tests now cover the new refusal, cooling-response, firmware,
   serial and validation paths.
 

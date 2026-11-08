@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("flask")
 
-from conftest import load_module
+from conftest import load_module, ROOT
 
 web_server = load_module("dev_web_server", "ha-idrac-controller-dev/app/web_server.py")
 
@@ -25,6 +25,7 @@ def client(tmp_path):
         "high_temp_fan_speed_percent": 50,
         "critical_temp_threshold": 65,
     }
+    web_server.app.template_folder = str(ROOT / "ha-idrac-controller-dev/app/templates")
     web_server.app.config["TESTING"] = True
     with web_server.app.test_client() as test_client:
         yield test_client
@@ -73,4 +74,30 @@ def test_redirect_delete_unknown_alias(client):
     path = "servers/delete/unknown_server"
     res = client.post(f"/{path}")
     assert_redirect_to_manage_page(res, path)
+
+
+def test_render_servers_page_with_servers(client):
+    res = client.get("/servers")
+    assert res.status_code == 200
+    html = res.get_data(as_text=True)
+    pos_cfg = html.find("Configured Servers")
+    pos_add = html.find("Add New Server")
+    assert pos_cfg != -1 and pos_add != -1
+    assert pos_cfg < pos_add
+    assert "<details open>" not in html
+
+
+def test_render_servers_page_empty(client, tmp_path):
+    config_file = str(tmp_path / "empty_servers.json")
+    with open(config_file, "w") as f:
+        json.dump([], f)
+    web_server.SERVERS_CONFIG_FILE = config_file
+    res = client.get("/servers")
+    assert res.status_code == 200
+    html = res.get_data(as_text=True)
+    pos_cfg = html.find("Configured Servers")
+    pos_add = html.find("Add New Server")
+    assert pos_cfg != -1 and pos_add != -1
+    assert "<details open>" in html
+
 

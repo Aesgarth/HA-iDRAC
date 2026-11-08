@@ -21,61 +21,6 @@
         {% endwith %}
 
         <div class="container">
-            <h2>Add New Server</h2>
-            <form action="servers/add" method="POST" class="form-grid">
-                <div class="form-group">
-                    <label for="alias">Alias</label>
-                    <input type="text" id="alias" name="alias" placeholder="e.g., R720-Main" required>
-                </div>
-                <div class="form-group">
-                    <label for="idrac_ip">iDRAC IP Address</label>
-                    <input type="text" id="idrac_ip" name="idrac_ip" placeholder="e.g., 192.168.1.10" required>
-                </div>
-                <div class="form-group">
-                    <label for="idrac_username">Username</label>
-                    <input type="text" id="idrac_username" name="idrac_username" value="root" required>
-                </div>
-                <div class="form-group">
-                    <label for="idrac_password">Password</label>
-                    <input type="password" id="idrac_password" name="idrac_password" required>
-                </div>
-                <div class="form-group">
-                    <label for="fan_control_enabled">Fan Control</label>
-                    <select id="fan_control_enabled" name="fan_control_enabled">
-                        <option value="true" selected>Enabled</option>
-                        <option value="false">Disabled (Monitor Only)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="disable_pcie_cooling_response">Third-party PCIe cooling</label>
-                    <select id="disable_pcie_cooling_response" name="disable_pcie_cooling_response">
-                        <option value="false" selected>Dell default (recommended)</option>
-                        <option value="true">Disabled (quieter with non-Dell cards)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="base_fan_speed_percent">Base Fan Speed (%)</label>
-                    <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent" value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">
-                </div>
-                <div class="form-group">
-                    <label for="low_temp_threshold">Low Temp Threshold (°C)</label>
-                    <input type="number" id="low_temp_threshold" name="low_temp_threshold" value="{{ defaults.low_temp_threshold }}" min="0" max="100">
-                </div>
-                <div class="form-group">
-                    <label for="high_temp_fan_speed_percent">High Temp Fan Speed (%)</label>
-                    <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent" value="{{ defaults.high_temp_fan_speed_percent }}" min="5" max="100">
-                </div>
-                 <div class="form-group">
-                    <label for="critical_temp_threshold">Critical Temp Threshold (°C)</label>
-                    <input type="number" id="critical_temp_threshold" name="critical_temp_threshold" value="{{ defaults.critical_temp_threshold }}" min="0" max="100">
-                </div>
-                <div class="form-actions">
-                    <button type="submit">Add Server</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="container">
             <h2>Configured Servers</h2>
             <table class="server-table">
                 <thead>
@@ -109,6 +54,63 @@
                 </tbody>
             </table>
         </div>
+
+        <div class="container">
+            <details {% if not servers %}open{% endif %}>
+                <summary>Add New Server</summary>
+                <form action="servers/add" method="POST" class="form-grid">
+                    <div class="form-group">
+                        <label for="alias">Alias</label>
+                        <input type="text" id="alias" name="alias" placeholder="e.g., R720-Main" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idrac_ip">iDRAC IP Address</label>
+                        <input type="text" id="idrac_ip" name="idrac_ip" placeholder="e.g., 192.168.1.10" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idrac_username">Username</label>
+                        <input type="text" id="idrac_username" name="idrac_username" value="root" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idrac_password">Password</label>
+                        <input type="password" id="idrac_password" name="idrac_password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="fan_control_enabled">Fan Control</label>
+                        <select id="fan_control_enabled" name="fan_control_enabled">
+                            <option value="true" selected>Enabled</option>
+                            <option value="false">Disabled (Monitor Only)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="disable_pcie_cooling_response">Third-party PCIe cooling</label>
+                        <select id="disable_pcie_cooling_response" name="disable_pcie_cooling_response">
+                            <option value="false" selected>Dell default (recommended)</option>
+                            <option value="true">Disabled (quieter with non-Dell cards)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="base_fan_speed_percent">Base Fan Speed (%)</label>
+                        <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent" value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="low_temp_threshold">Low Temp Threshold (°C)</label>
+                        <input type="number" id="low_temp_threshold" name="low_temp_threshold" value="{{ defaults.low_temp_threshold }}" min="0" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="high_temp_fan_speed_percent">High Temp Fan Speed (%)</label>
+                        <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent" value="{{ defaults.high_temp_fan_speed_percent }}" min="5" max="100">
+                    </div>
+                     <div class="form-group">
+                        <label for="critical_temp_threshold">Critical Temp Threshold (°C)</label>
+                        <input type="number" id="critical_temp_threshold" name="critical_temp_threshold" value="{{ defaults.critical_temp_threshold }}" min="0" max="100">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit">Add Server</button>
+                    </div>
+                </form>
+            </details>
+        </div>
     </div>
     <style>
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
@@ -123,6 +125,16 @@
         .server-table .button, .server-table button { text-decoration: none; padding: 6px 10px; border-radius: 4px; color: white; font-size: 0.9em; margin: 0; }
         .server-table .button { background-color: var(--primary-color); }
         .server-table button.destructive { background-color: var(--error-color); }
+        details summary {
+            font-size: var(--paper-font-title_-_font-size, 20px);
+            font-weight: var(--paper-font-headline_-_font-weight, 400);
+            color: var(--primary-text-color);
+            cursor: pointer;
+            user-select: none;
+        }
+        details[open] summary {
+            margin-bottom: 1em;
+        }
     </style>
 </body>
 </html>

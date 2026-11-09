@@ -15,6 +15,11 @@ class AdaptiveFanController:
     DEFAULT_POWER_W = 200.0
     DEFAULT_INLET_C = 25.0
     WINDOW_SECONDS = 150.0
+    INLET_ALPHA = 0.15
+    COOL_MARGIN = 2.0
+    FAST_DOWN_FACTOR = 2.0
+    TREND_SECONDS = 90.0
+    TREND_RISE = 0.5
 
     def __init__(self, setpoint, min_speed=15, max_speed=95, deadband=0.75,
                  ti_seconds=300.0, slew_down_per_min=4.0, emergency_margin=8.0):
@@ -33,6 +38,9 @@ class AdaptiveFanController:
         self.trim_leak_per_poll = 0.97
         self.temp_filtered = None
         self.window = []
+        self.trend = []
+        self.inlet_filtered = None
+        self.power_filtered = None
         self.speed = float(min_speed)
         self.last_time = None
         self.samples = 0
@@ -100,8 +108,14 @@ class AdaptiveFanController:
         now = time.time() if now is None else now
         dt = 30.0 if self.last_time is None else max(1.0, now - self.last_time)
         self.last_time = now
-        inlet = self.DEFAULT_INLET_C if inlet_temp is None else float(inlet_temp)
-        power = self.DEFAULT_POWER_W if power_w is None else float(power_w)
+        raw_inlet = self.DEFAULT_INLET_C if inlet_temp is None else float(inlet_temp)
+        raw_power = self.DEFAULT_POWER_W if power_w is None else float(power_w)
+        if self.inlet_filtered is None:
+            self.inlet_filtered, self.power_filtered = raw_inlet, raw_power
+        else:
+            self.inlet_filtered += self.INLET_ALPHA * (raw_inlet - self.inlet_filtered)
+            self.power_filtered = raw_power
+        inlet, power = self.inlet_filtered, self.power_filtered
 
         if self.temp_filtered is None:
             self.temp_filtered = float(current_temp)
@@ -117,6 +131,12 @@ class AdaptiveFanController:
 
         feed = self._feedforward(inlet, power)
         error = temp - self.setpoint
+        self.trend.append((now, temp))
+        self.trend = [p for p in self.trend if now - p[0] <= self.TREND_SECONDS]
+        rising = temp - self.trend[0][1] > self.TREND_RISE
+        overcooled = error < -self.COOL_MARGIN and not rising
+        if overcooled:
+            feed = min(feed, self.speed)
         self.trim *= self.trim_leak_per_poll ** (dt / 30.0)
         at_floor = self.speed <= self.min_speed and error < 0
         at_ceiling = self.speed >= self.max_speed and error > 0
@@ -131,7 +151,8 @@ class AdaptiveFanController:
         target = feed + self.trim + 0.5 * kp * excess
         target = max(self.min_speed, min(self.max_speed, target))
         if target < self.speed:
-            target = max(target, self.speed - self.slew_down_per_s * dt)
+            rate = self.slew_down_per_s * (self.FAST_DOWN_FACTOR if overcooled else 1.0)
+            target = max(target, self.speed - rate * dt)
         self.speed = target
         return int(round(self.speed))
 

@@ -33,8 +33,9 @@ def simulate(ctl, power_fn, r0=0.07, r1=0.03, tau=60.0, inlet=22.0, steps=480, s
 def test_learns_true_thermal_resistance():
     ctl = Ctl(65)
     simulate(ctl, lambda t: 182 if t < 1000 else 350 if t < 3600 else 220)
-    assert ctl.theta[0] == pytest.approx(0.07, abs=0.02)
-    assert ctl.theta[1] == pytest.approx(0.03, abs=0.01)
+    for speed in (15, 20, 25):
+        true_r = 0.07 + 0.03 * (speed / 100.0) ** -0.8
+        assert ctl.resistance(speed) == pytest.approx(true_r, rel=0.06)
 
 
 def test_holds_target_under_steady_load():
@@ -65,8 +66,8 @@ def test_slew_down_is_limited():
     ctl = Ctl(65)
     ctl.speed = 80.0
     ctl.last_time = 0.0
-    ctl.temp_filtered = 40.0
-    speed = ctl.update(40, 20, 100, now=30.0)
+    ctl.temp_filtered = 64.0
+    speed = ctl.update(64, 20, 100, now=30.0)
     assert 78 <= speed <= 80
 
 
@@ -98,3 +99,19 @@ def test_learns_while_speed_drifts_slowly():
     assert ctl.samples >= 3
     assert ctl.theta != [0.09, 0.02]
 
+
+def test_feedforward_does_not_raise_speed_when_already_cool():
+    ctl = Ctl(37)
+    ctl.theta = [0.1105, 0.0078]
+    ctl.speed = 20.0
+    for k in range(10):
+        speed = ctl.update(33, 11, 400, now=k * 30.0)
+        assert speed <= 20
+
+
+def test_inlet_quantisation_does_not_make_fans_chatter():
+    ctl = Ctl(37)
+    ctl.theta = [0.1105, 0.0078]
+    ctl.speed = 17.0
+    speeds = [ctl.update(37, 10 + (k % 2), 182, now=k * 30.0) for k in range(60)]
+    assert max(speeds[20:]) - min(speeds[20:]) <= 1

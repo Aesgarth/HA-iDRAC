@@ -161,10 +161,16 @@ class ServerWorker:
             self.server_info["firmware"] = firmware
             self._log("info", f"iDRAC firmware version: {firmware}")
 
-        for warning in self.fan_cfg["warnings"]:
-            self._log("warning", warning)
-        self._log("info", f"Fan profile: base {self.fan_cfg['base']}%, high {self.fan_cfg['high']}% at "
-                           f"{self.fan_cfg['low']} C, Dell auto at {self.fan_cfg['critical']} C")
+        if fan_mode == 'target':
+            target_str = int(self.pid.setpoint) if self.pid.setpoint.is_integer() else self.pid.setpoint
+            min_str = int(self.pid.min_speed) if self.pid.min_speed.is_integer() else self.pid.min_speed
+            max_str = int(self.pid.max_speed) if self.pid.max_speed.is_integer() else self.pid.max_speed
+            self._log("info", f"PID target {target_str} C, min {min_str}%, max {max_str}%")
+        else:
+            for warning in self.fan_cfg["warnings"]:
+                self._log("warning", warning)
+            self._log("info", f"Fan profile: base {self.fan_cfg['base']}%, high {self.fan_cfg['high']}% at "
+                               f"{self.fan_cfg['low']} C, Dell auto at {self.fan_cfg['critical']} C")
 
         if self.config.get("disable_pcie_cooling_response") and self.config.get('fan_control_enabled', True):
             if self.ipmi.set_third_party_pcie_cooling_response(enabled=False):

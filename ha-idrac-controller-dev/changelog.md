@@ -1,3 +1,7 @@
+## 0.1.0-dev.19 - 2026-11-09
+
+* ⚡ **PID**: Smooth inlet reading; stop feedforward ramping up when the CPU is already below target and not rising (fan power feedback).
+
 ## 0.1.0-dev.18 - 2026-11-08
 
 * 🐛 **PID**: Fixed the learner never taking samples when fan speed drifted slowly.

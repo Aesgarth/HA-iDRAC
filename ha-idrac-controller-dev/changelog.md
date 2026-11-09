@@ -1,6 +1,7 @@
 ## 0.1.0-dev.18 - 2026-11-08
 
 * 🐛 **PID**: Fixed the learner never taking samples when fan speed drifted slowly.
+**<font color="red">⚠️ Known issue: When first started and learning, PID mode can and probably will ramp fans up to near their highest configured speed. There is a very good chance your server will be LOUD ⚠️</font>**
 
 ## 0.1.0-dev.17 - 2026-11-08
 

@@ -1,3 +1,7 @@
+## 0.1.0-dev.18 - 2026-11-08
+
+* 🐛 **PID**: Fixed the learner never taking samples when fan speed drifted slowly.
+
 ## 0.1.0-dev.17 - 2026-11-08
 
 * 🧠 **Adaptive Fan Controller**: Replaced fixed Kp/Ki/Kd PID controller with self-tuning `AdaptiveFanController` that learns server thermal resistance and uses feedforward with leaky integral trim.

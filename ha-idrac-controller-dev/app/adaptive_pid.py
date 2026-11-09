@@ -14,6 +14,7 @@ class AdaptiveFanController:
     GAMMA = 0.8
     DEFAULT_POWER_W = 200.0
     DEFAULT_INLET_C = 25.0
+    WINDOW_SECONDS = 150.0
 
     def __init__(self, setpoint, min_speed=15, max_speed=95, deadband=0.75,
                  ti_seconds=300.0, slew_down_per_min=4.0, emergency_margin=8.0):
@@ -31,11 +32,9 @@ class AdaptiveFanController:
         self.trim_limit = 6.0
         self.trim_leak_per_poll = 0.97
         self.temp_filtered = None
-        self.prev_filtered = None
-        self.prev_speed = None
+        self.window = []
         self.speed = float(min_speed)
         self.last_time = None
-        self.stable_seconds = 0.0
         self.samples = 0
 
     def set_gains(self, setpoint=None, min_speed=None, max_speed=None, deadband=None, ti_seconds=None):
@@ -53,16 +52,26 @@ class AdaptiveFanController:
     def resistance(self, speed):
         return self.theta[0] + self.theta[1] * (max(speed, 5.0) / 100.0) ** -self.GAMMA
 
-    def _learn(self, temp, inlet, power, speed, dt):
-        steady = (self.prev_filtered is not None and abs(temp - self.prev_filtered) < 0.4
-                  and self.prev_speed == speed)
-        self.stable_seconds = self.stable_seconds + dt if steady else 0.0
-        self.prev_filtered = temp
-        self.prev_speed = speed
-        if self.stable_seconds < 180.0 or power < 20.0:
+    def _learn(self, temp, inlet, power, speed, now):
+        self.window.append((now, temp, speed, inlet, power))
+        self.window = [w for w in self.window if now - w[0] <= self.WINDOW_SECONDS + 60.0]
+        if now - self.window[0][0] < self.WINDOW_SECONDS:
             return
-        y = (temp - inlet) / power
-        x = [1.0, (speed / 100.0) ** -self.GAMMA]
+        temps = [w[1] for w in self.window]
+        speeds = [w[2] for w in self.window]
+        inlets = [w[3] for w in self.window]
+        powers = [w[4] for w in self.window]
+        mean_power = sum(powers) / len(powers)
+        if (max(temps) - min(temps) > 1.2 or max(speeds) - min(speeds) > 3.0
+                or max(inlets) - min(inlets) > 2.0 or max(powers) - min(powers) > 0.15 * mean_power
+                or mean_power < 20.0):
+            return
+        mean_temp = sum(temps) / len(temps)
+        mean_speed = sum(speeds) / len(speeds)
+        mean_inlet = sum(inlets) / len(inlets)
+        self.window = []
+        y = (mean_temp - mean_inlet) / mean_power
+        x = [1.0, (mean_speed / 100.0) ** -self.GAMMA]
         px = [self.cov[0][0] * x[0] + self.cov[0][1] * x[1],
               self.cov[1][0] * x[0] + self.cov[1][1] * x[1]]
         den = self.forgetting + x[0] * px[0] + x[1] * px[1]
@@ -100,7 +109,7 @@ class AdaptiveFanController:
             self.temp_filtered += 0.5 * (float(current_temp) - self.temp_filtered)
         temp = self.temp_filtered
 
-        self._learn(temp, inlet, power, round(self.speed), dt)
+        self._learn(temp, inlet, power, self.speed, now)
 
         if current_temp >= self.setpoint + self.emergency_margin:
             self.speed = self.max_speed
@@ -144,4 +153,3 @@ class AdaptiveFanController:
             self.samples = int(state.get("samples", 0))
         except (KeyError, TypeError, ValueError, IndexError):
             return
-

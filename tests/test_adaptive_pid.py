@@ -87,3 +87,14 @@ def test_state_roundtrip_and_bad_state_ignored():
     clean.load_state({"theta": [9, 9], "cov": [[1, 0], [0, 1]]})
     assert clean.theta == [0.09, 0.02]
 
+
+def test_learns_while_speed_drifts_slowly():
+    ctl = Ctl(37)
+    state = {"t": None}
+    speed = 30
+    for k in range(120):
+        temp = plant_step(state, speed, 182, 11, 0.07, 0.03, 90.0)
+        speed = ctl.update(round(temp), 11, 182, now=k * 30.0)
+    assert ctl.samples >= 3
+    assert ctl.theta != [0.09, 0.02]
+

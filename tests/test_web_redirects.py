@@ -128,12 +128,47 @@ def test_pid_form_zero_value_handling_and_validation(client):
         "max_speed": "4",     # max must be >= min (so 5)
         "deadband": "-1",     # min is 0
         "ti_seconds": "0",    # default to 300
+        "ramp_down_percent_per_min": "0",  # min is 1
     })
     assert clamped["target_temp"] == 20
     assert clamped["min_speed"] == 5
     assert clamped["max_speed"] == 5
     assert clamped["deadband"] == 0.0
     assert clamped["ti_seconds"] == 300.0
+    assert clamped["ramp_down_percent_per_min"] == 1
+
+    clamped_high = web_server.parse_and_validate_pid_config({
+        "ramp_down_percent_per_min": "100",  # max is 50
+    })
+    assert clamped_high["ramp_down_percent_per_min"] == 50
+
+
+def test_poll_interval_form_handling(client):
+    # Set custom poll interval
+    client.post("/servers/update/r720", data={
+        "poll_interval_seconds": "10",
+        "ramp_down_percent_per_min": "6",
+    })
+    servers = web_server.load_servers_config()
+    server = next(s for s in servers if s["alias"] == "r720")
+    assert server["poll_interval_seconds"] == 10
+    assert server["pid_config"]["ramp_down_percent_per_min"] == 6
+
+    # Clamped to min 5
+    client.post("/servers/update/r720", data={
+        "poll_interval_seconds": "2",
+    })
+    servers = web_server.load_servers_config()
+    server = next(s for s in servers if s["alias"] == "r720")
+    assert server["poll_interval_seconds"] == 5
+
+    # Blank resets to None (use global)
+    client.post("/servers/update/r720", data={
+        "poll_interval_seconds": "",
+    })
+    servers = web_server.load_servers_config()
+    server = next(s for s in servers if s["alias"] == "r720")
+    assert server["poll_interval_seconds"] is None
 
 
 def test_render_index_with_pid_status(client, tmp_path):

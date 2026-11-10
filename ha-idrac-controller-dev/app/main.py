@@ -92,6 +92,9 @@ class ServerWorker:
         max_speed = pid_config.get('max_speed', 95)
         deadband = pid_config.get('deadband', 0.75)
         ti_seconds = pid_config.get('ti_seconds', 300.0)
+        ramp_down = pid_config.get('ramp_down_percent_per_min')
+        if ramp_down is None or ramp_down == "":
+            ramp_down = 4.0
 
         self.pid = AdaptiveFanController(
             setpoint=target_temp,
@@ -99,8 +102,19 @@ class ServerWorker:
             max_speed=max_speed,
             deadband=deadband,
             ti_seconds=ti_seconds,
+            slew_down_per_min=float(ramp_down),
         )
         self.fan_state = SimpleFanState()
+
+        poll_int = self.config.get('poll_interval_seconds')
+        if poll_int is not None and str(poll_int).strip() != "":
+            try:
+                self.poll_interval = max(5.0, float(poll_int))
+            except (TypeError, ValueError):
+                self.poll_interval = float(self.global_opts.get('check_interval_seconds', 60))
+        else:
+            self.poll_interval = float(self.global_opts.get('check_interval_seconds', 60))
+        self._interval_overrun_warned = False
 
         self.server_info = {}
         self.discovered_sensors = set()
@@ -135,10 +149,9 @@ class ServerWorker:
         self._log("info", "Initializing server worker...")
 
         fan_mode = self.config.get('fan_mode', 'simple')
-        check_interval = self.global_opts.get('check_interval_seconds', 60)
-        if fan_mode == 'target' and check_interval > 30:
-            self._log("warning", f"Target temperature mode works best with check_interval_seconds <= 30 "
-                                 f"(current: {check_interval}s) so the controller receives enough samples.")
+        if fan_mode == 'target' and self.poll_interval > 30:
+            self._log("warning", f"Target temperature mode works best with poll_interval_seconds <= 10 "
+                                 f"(current: {int(self.poll_interval)}s) so the controller receives enough samples.")
 
         with pid_state_lock:
             if os.path.exists(PID_STATE_FILE):
@@ -216,8 +229,9 @@ class ServerWorker:
             self.alive = False
 
     def _run_loop(self):
+        next_run = time.monotonic()
         while self.running and running:
-            start_time = time.time()
+            cycle_start = time.monotonic()
 
             if (not self.mqtt.is_connected and self.global_opts.get("mqtt_host")
                     and time.time() >= self._next_mqtt_attempt):
@@ -230,6 +244,7 @@ class ServerWorker:
                     self.mqtt.publish(self.mqtt.availability_topic, "offline", retain=True)
                 self._log("warning", "Could not read temperature SDR data; skipping cycle.")
                 self._sleep(60)
+                next_run = time.monotonic()
                 continue
 
             if self.mqtt.is_connected:
@@ -275,15 +290,13 @@ class ServerWorker:
                     elif fan_mode == 'target':
                         inlet = temps.get('inlet_temp')
                         speed = self.pid.update(hottest_cpu, inlet, power)
-                        feed_speed = self.pid._feedforward(
-                            inlet if inlet is not None else self.pid.DEFAULT_INLET_C,
-                            power if power is not None else self.pid.DEFAULT_POWER_W,
-                        )
+                        feed_speed = self.pid.last_feedforward if self.pid.last_feedforward is not None else 0.0
                         self._log(
                             "debug",
                             f"PID update: temp={hottest_cpu}°C, inlet={inlet}°C, power={power}W, "
                             f"feedforward={feed_speed:.1f}%, trim={self.pid.trim:.2f}%, "
-                            f"theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}",
+                            f"theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}, "
+                            f"overcooled={self.pid.overcooled}",
                         )
                         if speed is not None:
                             target_fan_speed = clamp_speed(
@@ -356,7 +369,23 @@ class ServerWorker:
                 }
 
             self._publish_mqtt_data(status_data)
-            self._sleep(max(0.1, self.global_opts["check_interval_seconds"] - (time.time() - start_time)))
+
+            cycle_duration = time.monotonic() - cycle_start
+            self._log("debug", f"Cycle completed in {cycle_duration:.2f}s")
+
+            next_run += self.poll_interval
+            now = time.monotonic()
+            if now > next_run:
+                if not self._interval_overrun_warned:
+                    self._interval_overrun_warned = True
+                    self._log(
+                        "warning",
+                        f"Poll interval ({self.poll_interval:.1f}s) is too short for this iDRAC "
+                        f"(cycle took {cycle_duration:.2f}s); effective interval will be ~{cycle_duration:.2f}s."
+                    )
+                next_run = now
+            else:
+                self._sleep(next_run - now)
 
     def _sleep(self, seconds):
         """Sleep in small steps so SIGTERM can run cleanup promptly."""

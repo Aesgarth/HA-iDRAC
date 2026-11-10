@@ -115,3 +115,40 @@ def test_inlet_quantisation_does_not_make_fans_chatter():
     ctl.speed = 17.0
     speeds = [ctl.update(37, 10 + (k % 2), 182, now=k * 30.0) for k in range(60)]
     assert max(speeds[20:]) - min(speeds[20:]) <= 1
+
+
+@pytest.mark.parametrize("poll", [5, 10, 15, 30])
+def test_holds_target_at_any_poll_interval(poll):
+    ctl = Ctl(65)
+    state = {"t": None}
+    speed = 25
+    temps = []
+    for k in range(int(7200 / poll)):
+        temp = plant_step(state, speed, 350, 22.0, 0.07, 0.03, 60.0, dt=poll)
+        speed = ctl.update(round(temp), 22.0, 350, now=k * float(poll))
+        temps.append(temp)
+    assert max(abs(x - 65) for x in temps[-int(1200 / poll):]) < 3.0
+
+
+def test_ramp_down_setting_controls_speed():
+    slow, fast = Ctl(65), Ctl(65)
+    slow.set_gains(ramp_down_per_min=2)
+    fast.set_gains(ramp_down_per_min=20)
+    for ctl in (slow, fast):
+        ctl.speed = 90.0
+        ctl.last_time = 0.0
+        ctl.temp_filtered = 64.0
+    s = slow.update(64, 20, 100, now=60.0)
+    f = fast.update(64, 20, 100, now=60.0)
+    assert 87 <= s <= 90
+    assert f < s - 10
+
+
+def test_exposes_applied_feedforward_and_overcooled_flag():
+    ctl = Ctl(37)
+    ctl.theta = [0.1005, 0.0098]
+    ctl.speed = 20.0
+    ctl.update(33, 11, 400, now=0.0)
+    ctl.update(33, 11, 400, now=30.0)
+    assert ctl.overcooled is True
+    assert ctl.last_feedforward <= 20.0

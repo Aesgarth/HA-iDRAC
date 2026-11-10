@@ -1,23 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>Manage iDRAC Servers</title>
     <link rel="stylesheet" href="static/style.css">
 </head>
+
 <body>
     <div class="main-container">
         <h1>Manage iDRAC Servers</h1>
         <p><a href="./">&laquo; Back to Dashboard</a></p>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <ul class=flashes>
-                {% for category, message in messages %}
-                    <li class="{{ category }}">{{ message }}</li>
-                {% endfor %}
-                </ul>
-            {% endif %}
+        {% if messages %}
+        <ul class=flashes>
+            {% for category, message in messages %}
+            <li class="{{ category }}">{{ message }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
         {% endwith %}
 
         <div class="container">
@@ -41,7 +43,8 @@
                         <td>{{ server.idrac_username }}</td>
                         <td class="actions">
                             <a href="servers/edit/{{ server.alias }}" class="button">Edit</a>
-                            <form action="servers/delete/{{ server.alias }}" method="POST" onsubmit="return confirm('Are you sure you want to delete this server?');">
+                            <form action="servers/delete/{{ server.alias }}" method="POST"
+                                onsubmit="return confirm('Are you sure you want to delete this server?');">
                                 <button type="submit" class="destructive">Delete</button>
                             </form>
                         </td>
@@ -91,20 +94,43 @@
                     </div>
                     <div class="form-group">
                         <label for="base_fan_speed_percent">Base Fan Speed (%)</label>
-                        <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent" value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">
+                        <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent"
+                            value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">
                     </div>
                     <div class="form-group">
                         <label for="low_temp_threshold">Low Temp Threshold (°C)</label>
-                        <input type="number" id="low_temp_threshold" name="low_temp_threshold" value="{{ defaults.low_temp_threshold }}" min="0" max="100">
+                        <input type="number" id="low_temp_threshold" name="low_temp_threshold"
+                            value="{{ defaults.low_temp_threshold }}" min="0" max="100">
                     </div>
                     <div class="form-group">
                         <label for="high_temp_fan_speed_percent">High Temp Fan Speed (%)</label>
-                        <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent" value="{{ defaults.high_temp_fan_speed_percent }}" min="5" max="100">
+                        <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent"
+                            value="{{ defaults.high_temp_fan_speed_percent }}" min="5" max="100">
                     </div>
-                     <div class="form-group">
+                    <div class="form-group">
                         <label for="critical_temp_threshold">Critical Temp Threshold (°C)</label>
-                        <input type="number" id="critical_temp_threshold" name="critical_temp_threshold" value="{{ defaults.critical_temp_threshold }}" min="0" max="100">
+                        <input type="number" id="critical_temp_threshold" name="critical_temp_threshold"
+                            value="{{ defaults.critical_temp_threshold }}" min="0" max="100">
                     </div>
+                    <div class="form-group">
+                        <label for="poll_interval_seconds">Poll Interval (seconds)</label>
+                        <input type="number" id="poll_interval_seconds" name="poll_interval_seconds" min="5"
+                            placeholder="Default (global)">
+                        <small>Seconds between readings. 10 is a good value for PID mode; very small values load the
+                            iDRAC.</small>
+                    </div>
+                    <details class="form-group" style="grid-column: span 2; margin-top: 0.5em;">
+                        <summary style="cursor: pointer; font-weight: bold;">Advanced Settings</summary>
+                        <div class="form-grid" style="margin-top: 1em;">
+                            <div class="form-group">
+                                <label for="ramp_down_percent_per_min">Ramp Down Rate (% / min)</label>
+                                <input type="number" id="ramp_down_percent_per_min" name="ramp_down_percent_per_min"
+                                    value="4" min="1" max="50">
+                                <small>How fast fans slow down after a temperature spike. Lower is quieter and steadier,
+                                    higher saves fan noise sooner.</small>
+                            </div>
+                        </div>
+                    </details>
                     <div class="form-actions">
                         <button type="submit">Add Server</button>
                     </div>
@@ -113,18 +139,71 @@
         </div>
     </div>
     <style>
-        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
-        .form-group { display: flex; flex-direction: column; }
-        .form-group label { margin-bottom: 0.5em; }
-        .form-group input, .form-group select { max-width: none; }
-        .form-actions { grid-column: span 2; }
-        .server-table { width: 100%; border-collapse: collapse; }
-        .server-table th, .server-table td { padding: 12px; border-bottom: 1px solid var(--divider-color); text-align: left; vertical-align: middle; }
-        .server-table th { background-color: var(--secondary-background-color); }
-        .server-table .actions { display: flex; gap: 8px; align-items: center; }
-        .server-table .button, .server-table button { text-decoration: none; padding: 6px 10px; border-radius: 4px; color: white; font-size: 0.9em; margin: 0; }
-        .server-table .button { background-color: var(--primary-color); }
-        .server-table button.destructive { background-color: var(--error-color); }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1em;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            margin-bottom: 0.5em;
+        }
+
+        .form-group input,
+        .form-group select {
+            max-width: none;
+        }
+
+        .form-actions {
+            grid-column: span 2;
+        }
+
+        .server-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .server-table th,
+        .server-table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--divider-color);
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        .server-table th {
+            background-color: var(--secondary-background-color);
+        }
+
+        .server-table .actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .server-table .button,
+        .server-table button {
+            text-decoration: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            color: white;
+            font-size: 0.9em;
+            margin: 0;
+        }
+
+        .server-table .button {
+            background-color: var(--primary-color);
+        }
+
+        .server-table button.destructive {
+            background-color: var(--error-color);
+        }
+
         details summary {
             font-size: var(--paper-font-title_-_font-size, 20px);
             font-weight: var(--paper-font-headline_-_font-weight, 400);
@@ -132,9 +211,11 @@
             cursor: pointer;
             user-select: none;
         }
+
         details[open] summary {
             margin-bottom: 1em;
         }
     </style>
 </body>
+
 </html>

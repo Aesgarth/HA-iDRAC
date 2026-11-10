@@ -1,3 +1,10 @@
+## 0.1.0-dev.20 - 2026-11-10
+
+* ⚙️ **Settings**: Added per-server ramp-down rate setting (`ramp_down_percent_per_min`, 1–50%/min, default 4) to control how quickly fans slow down after load bursts.
+* ⏱️ **Polling**: Added optional per-server poll interval (`poll_interval_seconds`, min 5s) with monotonic scheduling against deadlines and one-time cycle overrun warning.
+* 🧠 **PID Filters**: Made temperature and inlet smoothing filters time-based (`TEMP_TAU_SECONDS`, `INLET_TAU_SECONDS`) for invariant filter behavior across poll rates.
+* 📊 **Logging**: Clearer PID debug log displaying the actual applied feedforward speed and overcooled status.
+
 ## 0.1.0-dev.19 - 2026-11-09
 
 * ⚡ **PID**: Smooth inlet reading; stop feedforward ramping up when the CPU is already below target and not rising (fan power feedback).

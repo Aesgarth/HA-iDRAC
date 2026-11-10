@@ -46,6 +46,15 @@ def _float_field(form, name, default):
     return _to_float(form.get(name), default)
 
 
+def _parse_poll_interval(val):
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        return None
+    try:
+        return max(5, int(val))
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_and_validate_pid_config(form):
     target_val = form.get('target_temp') if form.get('target_temp') is not None else form.get('pid_target_temp')
     target_temp = _to_int(target_val, 50)
@@ -72,12 +81,17 @@ def parse_and_validate_pid_config(form):
     if ti_seconds <= 0:
         ti_seconds = 300.0
 
+    ramp_down_val = form.get('ramp_down_percent_per_min') if form.get('ramp_down_percent_per_min') is not None else form.get('pid_ramp_down_percent_per_min')
+    ramp_down = _to_int(ramp_down_val, 4)
+    ramp_down = max(1, min(50, ramp_down))
+
     return {
         "target_temp": target_temp,
         "min_speed": min_speed,
         "max_speed": max_speed,
         "deadband": deadband,
         "ti_seconds": ti_seconds,
+        "ramp_down_percent_per_min": ramp_down,
     }
 
 
@@ -152,6 +166,7 @@ def add_server():
         flash(f"Server alias '{new_alias}' already exists.", "error")
         return redirect('../servers')
 
+    poll_int = _parse_poll_interval(request.form.get('poll_interval_seconds'))
     new_server = {
         "alias": new_alias,
         "idrac_ip": (request.form.get('idrac_ip') or "").strip(),
@@ -165,6 +180,7 @@ def add_server():
         "low_temp_threshold": _int_field(request.form, 'low_temp_threshold', 45),
         "high_temp_fan_speed_percent": _int_field(request.form, 'high_temp_fan_speed_percent', 50),
         "critical_temp_threshold": _int_field(request.form, 'critical_temp_threshold', 65),
+        "poll_interval_seconds": poll_int,
         "pid_config": parse_and_validate_pid_config(request.form),
         "fan_curve": [],
     }
@@ -180,6 +196,7 @@ def edit_server_form(alias):
     if server_to_edit:
         server_to_edit.setdefault('fan_mode', 'simple')
         server_to_edit.setdefault('fan_curve', [])
+        server_to_edit.setdefault('poll_interval_seconds', None)
         pid_cfg = server_to_edit.setdefault('pid_config', {})
         if pid_cfg.get('target_temp') is None or pid_cfg.get('target_temp') == "":
             pid_cfg['target_temp'] = 50
@@ -191,6 +208,8 @@ def edit_server_form(alias):
             pid_cfg['deadband'] = 0.75
         if pid_cfg.get('ti_seconds') is None or pid_cfg.get('ti_seconds') == "":
             pid_cfg['ti_seconds'] = 300.0
+        if pid_cfg.get('ramp_down_percent_per_min') is None or pid_cfg.get('ramp_down_percent_per_min') == "":
+            pid_cfg['ramp_down_percent_per_min'] = 4
         server_to_edit.setdefault('fan_control_enabled', True)
         server_to_edit.setdefault('disable_pcie_cooling_response', False)
         return render_template('edit_server.html', server=server_to_edit)
@@ -222,6 +241,7 @@ def update_server(alias):
     server_to_update['high_temp_fan_speed_percent'] = _int_field(request.form, 'high_temp_fan_speed_percent', 50)
     server_to_update['critical_temp_threshold'] = _int_field(request.form, 'critical_temp_threshold', 65)
 
+    server_to_update['poll_interval_seconds'] = _parse_poll_interval(request.form.get('poll_interval_seconds'))
     server_to_update['pid_config'] = parse_and_validate_pid_config(request.form)
 
     fan_curve = []

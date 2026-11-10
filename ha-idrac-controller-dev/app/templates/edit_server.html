@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>Edit {{ server.alias }}</title>
     <link rel="stylesheet" href="../../static/style.css">
 </head>
+
 <body>
     <div class="main-container">
         <h1>Edit Server: {{ server.alias }}</h1>
@@ -12,25 +14,43 @@
 
         <div class="container">
             <form action="../update/{{ server.alias }}" method="POST">
-                
+
                 <div class="form-grid">
-                    <div class="form-group"><label for="idrac_ip">iDRAC IP Address</label><input type="text" id="idrac_ip" name="idrac_ip" value="{{ server.idrac_ip }}" required></div>
-                    <div class="form-group"><label for="idrac_username">Username</label><input type="text" id="idrac_username" name="idrac_username" value="{{ server.idrac_username }}" required></div>
-                    <div class="form-group"><label for="idrac_password">New Password</label><input type="password" id="idrac_password" name="idrac_password" placeholder="Leave blank to keep existing"></div>
-                    <div class="form-group"><label for="enabled">Enabled</label><select id="enabled" name="enabled"><option value="true" {% if server.enabled %}selected{% endif %}>Yes</option><option value="false" {% if not server.enabled %}selected{% endif %}>No</option></select></div>
+                    <div class="form-group"><label for="idrac_ip">iDRAC IP Address</label><input type="text"
+                            id="idrac_ip" name="idrac_ip" value="{{ server.idrac_ip }}" required></div>
+                    <div class="form-group"><label for="idrac_username">Username</label><input type="text"
+                            id="idrac_username" name="idrac_username" value="{{ server.idrac_username }}" required>
+                    </div>
+                    <div class="form-group"><label for="idrac_password">New Password</label><input type="password"
+                            id="idrac_password" name="idrac_password" placeholder="Leave blank to keep existing"></div>
+                    <div class="form-group"><label for="enabled">Enabled</label><select id="enabled" name="enabled">
+                            <option value="true" {% if server.enabled %}selected{% endif %}>Yes</option>
+                            <option value="false" {% if not server.enabled %}selected{% endif %}>No</option>
+                        </select></div>
                     <div class="form-group">
                         <label for="fan_control_enabled">Fan Control</label>
                         <select id="fan_control_enabled" name="fan_control_enabled">
                             <option value="true" {% if server.fan_control_enabled %}selected{% endif %}>Enabled</option>
-                            <option value="false" {% if not server.fan_control_enabled %}selected{% endif %}>Disabled (Monitor Only)</option>
+                            <option value="false" {% if not server.fan_control_enabled %}selected{% endif %}>Disabled
+                                (Monitor Only)</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label for="disable_pcie_cooling_response">Third-party PCIe cooling</label>
                         <select id="disable_pcie_cooling_response" name="disable_pcie_cooling_response">
-                            <option value="false" {% if not server.disable_pcie_cooling_response %}selected{% endif %}>Dell default (recommended)</option>
-                            <option value="true" {% if server.disable_pcie_cooling_response %}selected{% endif %}>Disabled (quieter with non-Dell cards)</option>
+                            <option value="false" {% if not server.disable_pcie_cooling_response %}selected{% endif %}>
+                                Dell default (recommended)</option>
+                            <option value="true" {% if server.disable_pcie_cooling_response %}selected{% endif %}>
+                                Disabled (quieter with non-Dell cards)</option>
                         </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="poll_interval_seconds">Poll Interval (seconds)</label>
+                        <input type="number" id="poll_interval_seconds" name="poll_interval_seconds"
+                            value="{{ server.poll_interval_seconds if server.poll_interval_seconds is not none and server.poll_interval_seconds != '' else '' }}"
+                            min="5" placeholder="Default (global)">
+                        <small>Seconds between readings. 10 is a good value for PID mode; very small values load the
+                            iDRAC.</small>
                     </div>
                 </div>
 
@@ -39,19 +59,30 @@
                 <div class="form-group">
                     <label for="fan_mode">Select Fan Mode</label>
                     <select id="fan_mode" name="fan_mode" onchange="updateFanMode()">
-                        <option value="simple" {% if server.fan_mode == 'simple' %}selected{% endif %}>Simple Thresholds</option>
-                        <option value="curve" {% if server.fan_mode == 'curve' %}selected{% endif %}>Multi-Point Curve</option>
-                        <option value="target" {% if server.fan_mode == 'target' %}selected{% endif %}>Target Temperature (PID)</option>
+                        <option value="simple" {% if server.fan_mode=='simple' %}selected{% endif %}>Simple Thresholds
+                        </option>
+                        <option value="curve" {% if server.fan_mode=='curve' %}selected{% endif %}>Multi-Point Curve
+                        </option>
+                        <option value="target" {% if server.fan_mode=='target' %}selected{% endif %}>Target Temperature
+                            (PID)</option>
                     </select>
                 </div>
 
                 <div id="simple-mode" class="fan-mode-section">
                     <h3>Simple Thresholds</h3>
                     <div class="form-grid">
-                        <div class="form-group"><label>Base Fan Speed (%)</label><input type="number" name="base_fan_speed_percent" value="{{ server.base_fan_speed_percent }}" min="5" max="100"></div>
-                        <div class="form-group"><label>Low Temp Threshold (°C)</label><input type="number" name="low_temp_threshold" value="{{ server.low_temp_threshold }}" min="0" max="100"></div>
-                        <div class="form-group"><label>High Temp Fan Speed (%)</label><input type="number" name="high_temp_fan_speed_percent" value="{{ server.high_temp_fan_speed_percent }}" min="5" max="100"></div>
-                        <div class="form-group"><label>Critical Temp Threshold (°C)</label><input type="number" name="critical_temp_threshold" value="{{ server.critical_temp_threshold }}" min="0" max="100"></div>
+                        <div class="form-group"><label>Base Fan Speed (%)</label><input type="number"
+                                name="base_fan_speed_percent" value="{{ server.base_fan_speed_percent }}" min="5"
+                                max="100"></div>
+                        <div class="form-group"><label>Low Temp Threshold (°C)</label><input type="number"
+                                name="low_temp_threshold" value="{{ server.low_temp_threshold }}" min="0" max="100">
+                        </div>
+                        <div class="form-group"><label>High Temp Fan Speed (%)</label><input type="number"
+                                name="high_temp_fan_speed_percent" value="{{ server.high_temp_fan_speed_percent }}"
+                                min="5" max="100"></div>
+                        <div class="form-group"><label>Critical Temp Threshold (°C)</label><input type="number"
+                                name="critical_temp_threshold" value="{{ server.critical_temp_threshold }}" min="0"
+                                max="100"></div>
                     </div>
                 </div>
 
@@ -60,17 +91,23 @@
                     <div class="form-grid">
                         <div class="form-group">
                             <label for="target_temp">Target Temperature (°C)</label>
-                            <input type="number" id="target_temp" name="target_temp" value="{{ server.pid_config.target_temp if server.pid_config.target_temp is not none and server.pid_config.target_temp != '' else 50 }}" min="20" max="90" required>
+                            <input type="number" id="target_temp" name="target_temp"
+                                value="{{ server.pid_config.target_temp if server.pid_config.target_temp is not none and server.pid_config.target_temp != '' else 50 }}"
+                                min="20" max="90" required>
                             <small>The self-tuning controller will maintain this CPU temperature (20–90°C).</small>
                         </div>
                         <div class="form-group">
                             <label for="min_speed">Min Fan Speed (%)</label>
-                            <input type="number" id="min_speed" name="min_speed" value="{{ server.pid_config.min_speed if server.pid_config.min_speed is not none and server.pid_config.min_speed != '' else 15 }}" min="5" max="100">
+                            <input type="number" id="min_speed" name="min_speed"
+                                value="{{ server.pid_config.min_speed if server.pid_config.min_speed is not none and server.pid_config.min_speed != '' else 15 }}"
+                                min="5" max="100">
                             <small>Minimum fan speed limit (5–100%).</small>
                         </div>
                         <div class="form-group">
                             <label for="max_speed">Max Fan Speed (%)</label>
-                            <input type="number" id="max_speed" name="max_speed" value="{{ server.pid_config.max_speed if server.pid_config.max_speed is not none and server.pid_config.max_speed != '' else 95 }}" min="5" max="100">
+                            <input type="number" id="max_speed" name="max_speed"
+                                value="{{ server.pid_config.max_speed if server.pid_config.max_speed is not none and server.pid_config.max_speed != '' else 95 }}"
+                                min="5" max="100">
                             <small>Maximum fan speed limit (5–100%).</small>
                         </div>
                     </div>
@@ -79,13 +116,25 @@
                         <div class="form-grid" style="margin-top: 1em;">
                             <div class="form-group">
                                 <label for="deadband">Deadband (°C)</label>
-                                <input type="number" id="deadband" name="deadband" step="0.05" value="{{ server.pid_config.deadband if server.pid_config.deadband is not none and server.pid_config.deadband != '' else 0.75 }}" min="0">
+                                <input type="number" id="deadband" name="deadband" step="0.05"
+                                    value="{{ server.pid_config.deadband if server.pid_config.deadband is not none and server.pid_config.deadband != '' else 0.75 }}"
+                                    min="0">
                                 <small>Temperature error deadband to prevent hunting (default 0.75°C).</small>
                             </div>
                             <div class="form-group">
                                 <label for="ti_seconds">Integral Time Constant Ti (seconds)</label>
-                                <input type="number" id="ti_seconds" name="ti_seconds" step="1" value="{{ server.pid_config.ti_seconds if server.pid_config.ti_seconds is not none and server.pid_config.ti_seconds != '' else 300 }}" min="1">
+                                <input type="number" id="ti_seconds" name="ti_seconds" step="1"
+                                    value="{{ server.pid_config.ti_seconds if server.pid_config.ti_seconds is not none and server.pid_config.ti_seconds != '' else 300 }}"
+                                    min="1">
                                 <small>Integral time constant for trimming steady-state offset (default 300s).</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="ramp_down_percent_per_min">Ramp Down Rate (% / min)</label>
+                                <input type="number" id="ramp_down_percent_per_min" name="ramp_down_percent_per_min"
+                                    value="{{ server.pid_config.ramp_down_percent_per_min if server.pid_config.ramp_down_percent_per_min is not none and server.pid_config.ramp_down_percent_per_min != '' else 4 }}"
+                                    min="1" max="50">
+                                <small>How fast fans slow down after a temperature spike. Lower is quieter and steadier,
+                                    higher saves fan noise sooner.</small>
                             </div>
                         </div>
                     </details>
@@ -96,8 +145,10 @@
                     <div id="fan-curve-points">
                         {% for point in server.fan_curve %}
                         <div class="fan-point">
-                            <label>Temp (&ge; °C):</label><input type="number" name="curve_temp_{{ loop.index0 }}" value="{{ point.temp }}">
-                            <label>Speed (%):</label><input type="number" name="curve_speed_{{ loop.index0 }}" value="{{ point.speed }}">
+                            <label>Temp (&ge; °C):</label><input type="number" name="curve_temp_{{ loop.index0 }}"
+                                value="{{ point.temp }}">
+                            <label>Speed (%):</label><input type="number" name="curve_speed_{{ loop.index0 }}"
+                                value="{{ point.speed }}">
                             <button type="button" class="destructive" onclick="removePoint(this)">Remove</button>
                         </div>
                         {% endfor %}
@@ -110,7 +161,7 @@
             </form>
         </div>
     </div>
-    
+
     <script>
         function updateFanMode() {
             const mode = document.getElementById('fan_mode').value;
@@ -120,7 +171,7 @@
         }
 
         let pointCounter = parseInt('{{ server.fan_curve|length }}', 10);
-        
+
         function addPoint() {
             const container = document.getElementById('fan-curve-points');
             const newPointHtml = `
@@ -149,39 +200,50 @@
             grid-template-columns: 1fr 1fr;
             gap: 1.5em;
         }
+
         .form-group {
             display: flex;
             flex-direction: column;
         }
+
         .form-group label {
             margin-bottom: 0.5em;
         }
-        .form-group input, .form-group select {
+
+        .form-group input,
+        .form-group select {
             max-width: none;
         }
+
         .form-actions {
             grid-column: span 2;
             margin-top: 1em;
         }
+
         .fan-mode-section {
             margin-top: 1.5em;
         }
+
         .fan-point {
             display: flex;
             align-items: center;
             gap: 10px;
             margin-bottom: 10px;
         }
+
         .fan-point label {
             white-space: nowrap;
         }
+
         .fan-point input {
             width: 80px;
         }
+
         hr {
             border: 1px solid var(--divider-color);
             margin: 2em 0;
         }
     </style>
 </body>
+
 </html>

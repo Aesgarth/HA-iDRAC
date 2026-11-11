@@ -1,3 +1,10 @@
+## 0.1.0-dev.21 - 2026-11-11
+
+* 💾 **Disk Health Monitoring**: Monitor physical disk health, states, and SMART predictive-failure alerts over SNMP (`IDRAC-MIB::physicalDiskTable`) on a dedicated background thread without interfering with fan control.
+* 📡 **MQTT Discovery**: Automatically publish per-disk health sensors (`sensor.idrac_<alias>_disk_<bay>_health`), a summary sensor (`sensor.idrac_<alias>_disks_summary`), and a problem binary sensor (`binary_sensor.idrac_<alias>_disks_problem`), with automatic cleanup for removed disks.
+* 🩺 **Diagnostics**: Added a "Test disk SNMP" button and raw SNMP output viewer on the Edit Server page for instant validation and troubleshooting across server generations.
+* 📊 **Dashboard**: Added a Physical Disks status table to the web UI dashboard with highlighted warning and problem states.
+
 ## 0.1.0-dev.20 - 2026-11-10
 
 * ⚙️ **Settings**: Added per-server ramp-down rate setting (`ramp_down_percent_per_min`, 1–50%/min, default 4) to control how quickly fans slow down after load bursts.

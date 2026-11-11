@@ -4,7 +4,25 @@ from markupsafe import Markup
 import os
 import json
 import logging
+import re
+import subprocess
 import threading
+
+try:
+    from . import disk_health
+except (ImportError, ValueError):
+    try:
+        from app import disk_health
+    except (ImportError, ValueError):
+        import importlib.util
+        from pathlib import Path
+        _dh_path = Path(__file__).parent / "disk_health.py"
+        if _dh_path.exists():
+            _spec = importlib.util.spec_from_file_location("disk_health", _dh_path)
+            disk_health = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(disk_health)
+        else:
+            disk_health = None
 
 log = logging.getLogger('werkzeug')
 app = Flask(__name__)
@@ -53,6 +71,28 @@ def _parse_poll_interval(val):
         return max(5, int(val))
     except (TypeError, ValueError):
         return None
+
+
+def _parse_disk_poll_minutes(val):
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        return 10
+    try:
+        minutes = int(val)
+        return max(1, min(1440, minutes))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _parse_snmp_port(val):
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        return 161
+    try:
+        port = int(val)
+        if 1 <= port <= 65535:
+            return port
+        return 161
+    except (TypeError, ValueError):
+        return 161
 
 
 def parse_and_validate_pid_config(form):
@@ -167,6 +207,12 @@ def add_server():
         return redirect('../servers')
 
     poll_int = _parse_poll_interval(request.form.get('poll_interval_seconds'))
+    snmp_comm = request.form.get('snmp_community')
+    if snmp_comm is not None:
+        snmp_comm = snmp_comm.strip()
+    else:
+        snmp_comm = ""
+
     new_server = {
         "alias": new_alias,
         "idrac_ip": (request.form.get('idrac_ip') or "").strip(),
@@ -175,6 +221,10 @@ def add_server():
         "enabled": True,
         "fan_control_enabled": request.form.get('fan_control_enabled') == 'true',
         "disable_pcie_cooling_response": request.form.get('disable_pcie_cooling_response') == 'true',
+        "snmp_enabled": request.form.get('snmp_enabled') in ('true', 'on', '1'),
+        "snmp_community": snmp_comm,
+        "snmp_port": _parse_snmp_port(request.form.get('snmp_port')),
+        "disk_poll_minutes": _parse_disk_poll_minutes(request.form.get('disk_poll_minutes')),
         "fan_mode": request.form.get('fan_mode') or "simple",
         "base_fan_speed_percent": _int_field(request.form, 'base_fan_speed_percent', 20),
         "low_temp_threshold": _int_field(request.form, 'low_temp_threshold', 45),
@@ -212,6 +262,10 @@ def edit_server_form(alias):
             pid_cfg['ramp_down_percent_per_min'] = 4
         server_to_edit.setdefault('fan_control_enabled', True)
         server_to_edit.setdefault('disable_pcie_cooling_response', False)
+        server_to_edit.setdefault('snmp_enabled', False)
+        server_to_edit.setdefault('snmp_community', '')
+        server_to_edit.setdefault('snmp_port', 161)
+        server_to_edit.setdefault('disk_poll_minutes', 10)
         return render_template('edit_server.html', server=server_to_edit)
     flash(f"Server '{alias}' not found.", "error")
     return redirect('../../servers')
@@ -233,6 +287,14 @@ def update_server(alias):
     server_to_update['enabled'] = request.form.get('enabled') == 'true'
     server_to_update['fan_control_enabled'] = request.form.get('fan_control_enabled') == 'true'
     server_to_update['disable_pcie_cooling_response'] = request.form.get('disable_pcie_cooling_response') == 'true'
+    server_to_update['snmp_enabled'] = request.form.get('snmp_enabled') in ('true', 'on', '1')
+    new_community = request.form.get('snmp_community')
+    if new_community is not None and new_community.strip() != "":
+        server_to_update['snmp_community'] = new_community.strip()
+    elif 'snmp_community' not in server_to_update:
+        server_to_update['snmp_community'] = ""
+    server_to_update['snmp_port'] = _parse_snmp_port(request.form.get('snmp_port'))
+    server_to_update['disk_poll_minutes'] = _parse_disk_poll_minutes(request.form.get('disk_poll_minutes'))
 
     server_to_update['fan_mode'] = request.form.get('fan_mode') or 'simple'
 
@@ -281,6 +343,55 @@ def delete_server(alias):
     else:
         flash(f"Server '{alias}' not found.", "error")
     return redirect('../../servers')
+
+
+@app.route('/servers/test_snmp/<alias>', methods=['POST'])
+def test_snmp(alias):
+    servers = load_servers_config()
+    server = next((s for s in servers if s['alias'] == alias), None)
+    if not server:
+        return {"success": False, "error": f"Server '{alias}' not found.", "disks": [], "raw": ""}, 404
+
+    data = request.get_json(silent=True) or request.form
+    host = (data.get('idrac_ip') or server.get('idrac_ip') or "").strip()
+    community = data.get('snmp_community')
+    if community is None or community.strip() == "":
+        community = server.get('snmp_community', '')
+    else:
+        community = community.strip()
+    port = _parse_snmp_port(data.get('snmp_port') if data.get('snmp_port') is not None else server.get('snmp_port', 161))
+
+    if not community:
+        return {"success": False, "error": "SNMP community string is not set.", "disks": [], "raw": ""}, 200
+
+    cmd = ["snmpwalk", "-v2c", "-c", community, "-On", "-t", "3", "-r", "1", f"{host}:{port}", "1.3.6.1.4.1.674.10892.5.5.1.20.130.4.1"]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        raw_output = (res.stdout or "") + (res.stderr or "")
+        if res.returncode != 0:
+            err_msg = (res.stderr or res.stdout).strip().splitlines()
+            reason = err_msg[0] if err_msg else f"snmpwalk exited with {res.returncode}"
+            return {"success": False, "error": reason, "disks": [], "raw": raw_output}, 200
+
+        disks_dict = disk_health.parse_walk(res.stdout)
+        if not disks_dict:
+            return {"success": False, "error": "No physical disks returned (SNMP agent off, wrong community, or no RAID controller).", "disks": [], "raw": raw_output}, 200
+
+        disks_list = []
+        for disk in disks_dict.values():
+            bay_match = re.search(r'Disk\.Bay\.(\d+)', disk.get('fqdn') or '')
+            bay = int(bay_match.group(1)) if bay_match else disk['index'] - 1
+            d_copy = dict(disk)
+            d_copy['bay'] = bay
+            disks_list.append(d_copy)
+
+        return {"success": True, "error": None, "disks": disks_list, "raw": raw_output}, 200
+    except FileNotFoundError:
+        return {"success": False, "error": "snmpwalk is not installed in this container.", "disks": [], "raw": ""}, 200
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "snmpwalk timed out.", "disks": [], "raw": ""}, 200
+    except Exception as e:
+        return {"success": False, "error": str(e), "disks": [], "raw": ""}, 200
 
 
 def run_web_server(port, status_file_path, lock):

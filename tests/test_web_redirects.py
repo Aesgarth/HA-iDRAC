@@ -192,3 +192,137 @@ def test_render_index_with_pid_status(client, tmp_path):
     assert "Learning (3 samples)" in html
 
 
+def test_add_server_with_snmp_settings(client):
+    res = client.post("/servers/add", data={
+        "alias": "r730-snmp",
+        "idrac_ip": "192.168.1.105",
+        "snmp_enabled": "true",
+        "snmp_community": "mysecret",
+        "snmp_port": "161",
+        "disk_poll_minutes": "15",
+    })
+    assert res.status_code == 302
+    servers = web_server.load_servers_config()
+    server = next(s for s in servers if s["alias"] == "r730-snmp")
+    assert server["snmp_enabled"] is True
+    assert server["snmp_community"] == "mysecret"
+    assert server["snmp_port"] == 161
+    assert server["disk_poll_minutes"] == 15
+
+
+def test_update_server_snmp_blank_community_keeps_existing(client):
+    client.post("/servers/add", data={
+        "alias": "r730-edit",
+        "idrac_ip": "192.168.1.106",
+        "snmp_enabled": "true",
+        "snmp_community": "originalsecret",
+    })
+    # Update with empty community
+    client.post("/servers/update/r730-edit", data={
+        "idrac_ip": "192.168.1.106",
+        "snmp_enabled": "true",
+        "snmp_community": "",
+        "disk_poll_minutes": "20",
+    })
+    servers = web_server.load_servers_config()
+    server = next(s for s in servers if s["alias"] == "r730-edit")
+    assert server["snmp_community"] == "originalsecret"
+    assert server["disk_poll_minutes"] == 20
+
+    # Ensure edit form does not echo community back in HTML value
+    edit_res = client.get("/servers/edit/r730-edit")
+    assert edit_res.status_code == 200
+    html = edit_res.get_data(as_text=True)
+    assert 'value="originalsecret"' not in html
+
+
+def test_test_snmp_endpoint(client, monkeypatch):
+    class MockResult:
+        returncode = 0
+        stdout = (
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.2.1 = STRING: \"Physical Disk 0:1:0\"\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.4.1 = INTEGER: 3\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.6.1 = STRING: \"ST91000640SS\"\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.11.1 = INTEGER: 953869\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.24.1 = INTEGER: 3\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.31.1 = INTEGER: 0\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.35.1 = INTEGER: 2\n"
+            "iso.3.6.1.4.1.674.10892.5.5.1.20.130.4.1.54.1 = STRING: \"Disk.Bay.0:Enclosure.Internal.0-1:RAID.Integrated.1-1\"\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr(web_server.subprocess, "run", lambda *a, **k: MockResult())
+
+    # Success case
+    res = client.post("/servers/test_snmp/r720", json={
+        "idrac_ip": "192.168.1.100",
+        "snmp_community": "public",
+        "snmp_port": 161
+    })
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["success"] is True
+    assert len(data["disks"]) == 1
+    assert data["disks"][0]["bay"] == 0
+    assert data["disks"][0]["model"] == "ST91000640SS"
+    assert data["disks"][0]["health"] == "ok"
+    assert "Physical Disk 0:1:0" in data["raw"]
+
+    # Failure case: command fails
+    class FailResult:
+        returncode = 1
+        stdout = ""
+        stderr = "Timeout: No Response from 192.168.1.100"
+
+    monkeypatch.setattr(web_server.subprocess, "run", lambda *a, **k: FailResult())
+    res_fail = client.post("/servers/test_snmp/r720", json={
+        "idrac_ip": "192.168.1.100",
+        "snmp_community": "public"
+    })
+    assert res_fail.status_code == 200
+    data_fail = res_fail.get_json()
+    assert data_fail["success"] is False
+    assert "Timeout: No Response" in data_fail["error"]
+
+
+def test_render_index_with_physical_disks(client, tmp_path):
+    status_file = str(tmp_path / "status.json")
+    with open(status_file, "w") as f:
+        json.dump([{
+            "alias": "r720",
+            "ip": "192.168.1.100",
+            "last_updated": "2026-11-11 12:00:00",
+            "hottest_cpu_temp_c": 48.0,
+            "inlet_temp_c": 22.0,
+            "exhaust_temp_c": 32.0,
+            "power_consumption_watts": 180,
+            "target_fan_speed_percent": 25,
+            "disks": [
+                {
+                    "bay": 0,
+                    "model": "ST91000640SS",
+                    "size_gb": 931,
+                    "media_type": "HDD",
+                    "health": "ok",
+                    "health_label": "OK",
+                },
+                {
+                    "bay": 1,
+                    "model": "ST91000640SS",
+                    "size_gb": 931,
+                    "media_type": "HDD",
+                    "health": "warning",
+                    "health_label": "Warning",
+                }
+            ],
+        }], f)
+    web_server.STATUS_FILE = status_file
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.get_data(as_text=True)
+    assert "Physical Disks" in html
+    assert "ST91000640SS" in html
+    assert "disk-problem" in html
+
+
+

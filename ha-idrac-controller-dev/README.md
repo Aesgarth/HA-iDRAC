@@ -132,6 +132,54 @@ For each server, the add-on will create a new device in Home Assistant with the 
 
 *(Entity IDs will be based on the unique alias you give each server).*
 
+## Disk Health Monitoring (SNMP)
+
+The add-on can monitor the physical disks connected to your server's storage/RAID controller using SNMP (`IDRAC-MIB::physicalDiskTable` OID `1.3.6.1.4.1.674.10892.5.5.1.20.130.4.1`).
+
+### How to Enable SNMP on iDRAC
+1. Log in to your iDRAC web interface.
+2. Navigate to **iDRAC Settings** > **Network** > **Services** (or **Network** > **SNMP Agent** on iDRAC 7/8).
+3. Check **Enable SNMP Agent**.
+4. Configure an **SNMP Community Name** (e.g. `public` or your custom community string).
+5. Ensure the SNMP port is `161` (default).
+6. Save and apply settings.
+*(Note: Requires an iDRAC Express or Enterprise licence; basic BMC does not provide the SNMP agent. SNMPv2c transmits community strings in plaintext on your local network).*
+
+### What Is and Is Not Available
+* **Available:** Per-disk operational state (online, ready, failed, offline, etc.), component status (OK, non-critical, critical), SMART predictive-failure alert, disk model, serial number, firmware revision, capacity in GB, media type (HDD/SSD), enclosure bay slot number, and manufacture week/year.
+* **Not Available:** Raw SMART diagnostic registers (individual disk temperatures, exact reallocated sector counts) are not exposed by the iDRAC SNMP agent via this MIB and cannot be retrieved through SNMP.
+
+### Home Assistant Entities Created
+* `sensor.idrac_<server>_disk_<bay>_health`: State is `OK`, `Warning`, `Predicted failure`, `Critical`, `Failed`, or `Offline`. Detailed hardware metadata (model, serial, firmware, size, slot) is stored in the entity attributes.
+* `sensor.idrac_<server>_disks_summary`: State is `All N disks OK` or `<k> problem(s)`.
+* `binary_sensor.idrac_<server>_disks_problem`: `problem` device class, turns `on` whenever any disk is degraded, failing, or offline.
+
+### Home Assistant Automation Example
+Receive an alert if any disk reports a problem or predictive failure:
+
+```yaml
+alias: "Alert: Server Physical Disk Issue"
+description: "Notify when a physical disk problem is detected on the iDRAC server"
+trigger:
+  - platform: state
+    entity_id: binary_sensor.idrac_r720_main_disks_problem
+    to: "on"
+action:
+  - service: notify.persistent_notification
+    data:
+      title: "Storage Alert: {{ state_attr('sensor.idrac_r720_main_disks_summary', 'problems') | join(', ') }}"
+      message: >
+        Server storage alert: {{ states('sensor.idrac_r720_main_disks_summary') }}.
+        Affected disks: {{ state_attr('sensor.idrac_r720_main_disks_summary', 'problems') | join(', ') }}.
+mode: single
+```
+
+## Does My Server Work?
+
+* **Supported Generations:** Supported on Dell PowerEdge servers with **iDRAC 7**, **iDRAC 8**, and **iDRAC 9** equipped with a storage or PERC RAID controller that iDRAC can query (e.g., PERC H310, H710, H730, H740, H330, etc.).
+* **Verified Hardware:** Verified on iDRAC 7 (Dell PowerEdge R720, PERC Integrated RAID Controller 1, SAS HDDs).
+* **Other Generations & Models:** If you run an iDRAC 8 or 9 server, please test using the **"Test disk SNMP"** button on the Edit Server page in the web UI. If you encounter any unexpected statuses or discrepancies, click **"Copy raw SNMP output"** and [open an issue on GitHub](https://github.com/Aesgarth/HA-iDRAC/issues) with the raw output so it can be incorporated as a test fixture.
+
 ## Troubleshooting
 
 * **Check the Add-on Log:** The first place to look for errors is the "Log" tab of the add-on. Set the "Log Level" to `debug` or `trace` in the Configuration tab for more detail.

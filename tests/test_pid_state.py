@@ -141,3 +141,45 @@ def test_pid_state_roundtrip_and_delete(tmp_path):
     assert "srv1" not in data_after
     assert "srv2" in data_after
 
+
+def test_server_worker_disk_poller_lifecycle(monkeypatch):
+    server_conf = {
+        "alias": "srv_snmp",
+        "idrac_ip": "192.168.1.200",
+        "idrac_username": "root",
+        "idrac_password": "calvin",
+        "snmp_enabled": True,
+        "snmp_community": "public",
+        "snmp_port": 161,
+        "disk_poll_minutes": 10,
+    }
+    global_opts = {
+        "log_level": "info",
+        "check_interval_seconds": 30,
+        "mqtt_host": "",
+        "mqtt_port": 1883,
+        "mqtt_username": "",
+        "mqtt_password": "",
+    }
+    worker = main.ServerWorker(server_conf, global_opts)
+    monkeypatch.setattr(worker.ipmi, "get_server_model_info", lambda: {"model": "R720"})
+    monkeypatch.setattr(worker.ipmi, "get_firmware_version", lambda: "2.41")
+    monkeypatch.setattr(worker.ipmi, "apply_dell_fan_control_profile", lambda: None)
+    monkeypatch.setattr(main, "save_pid_state", lambda *a, **k: None)
+
+    started = []
+    stopped = []
+    monkeypatch.setattr(main.DiskHealthPoller, "start", lambda self: started.append(True))
+    monkeypatch.setattr(main.DiskHealthPoller, "stop", lambda self: stopped.append(True))
+    monkeypatch.setattr(main.DiskHealthPoller, "join", lambda self, timeout=None: None)
+
+    worker._initialize()
+    assert worker.disk_poller is not None
+    assert len(started) == 1
+
+    worker.stop()
+    assert len(stopped) == 1
+
+    worker.cleanup()
+
+

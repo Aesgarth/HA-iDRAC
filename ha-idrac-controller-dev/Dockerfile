@@ -5,13 +5,15 @@ FROM python:3.11-slim-bookworm
 # Set the default shell for RUN commands to bash for consistency
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install system dependencies: ipmitool and bash (if not already primary), and jq
+# Install system dependencies: ipmitool, snmp, bash, and jq
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ipmitool \
+    snmp \
     bash \
     jq \  
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && snmpwalk -V
 
 # Set the working directory
 WORKDIR /app

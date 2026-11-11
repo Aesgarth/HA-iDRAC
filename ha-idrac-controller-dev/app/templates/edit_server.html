@@ -157,6 +157,48 @@
                 </div>
 
                 <hr>
+                <h2>Disk Health (SNMP)</h2>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="snmp_enabled">Disk Health Monitoring</label>
+                        <select id="snmp_enabled" name="snmp_enabled">
+                            <option value="false" {% if not server.snmp_enabled %}selected{% endif %}>Disabled</option>
+                            <option value="true" {% if server.snmp_enabled %}selected{% endif %}>Enabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="snmp_community">SNMP Community String</label>
+                        <input type="password" id="snmp_community" name="snmp_community"
+                            placeholder="Leave blank to keep existing">
+                    </div>
+                    <div class="form-group">
+                        <label for="snmp_port">SNMP Port</label>
+                        <input type="number" id="snmp_port" name="snmp_port"
+                            value="{{ server.snmp_port if server.snmp_port is not none and server.snmp_port != '' else 161 }}"
+                            min="1" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label for="disk_poll_minutes">Poll Interval (minutes)</label>
+                        <input type="number" id="disk_poll_minutes" name="disk_poll_minutes"
+                            value="{{ server.disk_poll_minutes if server.disk_poll_minutes is not none and server.disk_poll_minutes != '' else 10 }}"
+                            min="1" max="1440">
+                    </div>
+                    <div class="form-group" style="grid-column: span 2;">
+                        <small>Uses the same iDRAC address. Enable the SNMP agent in the iDRAC web page (Settings,
+                            Services, SNMP Agent). Needs an iDRAC Express or Enterprise licence. SNMPv2c sends the
+                            community string unencrypted on your network.</small>
+                    </div>
+                </div>
+                <div style="margin-top: 1em;">
+                    <button type="button" id="btn-test-snmp" onclick="testSnmp()" class="button"
+                        style="background-color: var(--primary-color); color: white; padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer;">Test
+                        disk SNMP</button>
+                </div>
+                <div id="snmp-test-result"
+                    style="display: none; margin-top: 1em; padding: 12px; border-radius: 8px; background: var(--secondary-background-color);">
+                </div>
+
+                <hr>
                 <div class="form-actions"><button type="submit">Save Changes</button></div>
             </form>
         </div>
@@ -188,6 +230,86 @@
 
         function removePoint(button) {
             button.parentElement.remove();
+        }
+
+        async function testSnmp() {
+            const btn = document.getElementById('btn-test-snmp');
+            const resultDiv = document.getElementById('snmp-test-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<p><em>Running SNMP test, please wait...</em></p>';
+            btn.disabled = true;
+
+            try {
+                const payload = {
+                    idrac_ip: document.getElementById('idrac_ip').value,
+                    snmp_community: document.getElementById('snmp_community').value,
+                    snmp_port: document.getElementById('snmp_port').value
+                };
+                const resp = await fetch('../test_snmp/{{ server.alias }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+
+                let html = '';
+                if (data.success && data.disks && data.disks.length > 0) {
+                    html += `<h3 style="margin-top:0; color:#4caf50;">SNMP Test Succeeded (${data.disks.length} disks found)</h3>`;
+                    html += `<table style="width:100%; border-collapse:collapse; margin-bottom:1em;">
+                        <thead>
+                            <tr style="text-align:left; border-bottom:1px solid var(--divider-color);">
+                                <th style="padding:6px;">Bay</th>
+                                <th style="padding:6px;">Model</th>
+                                <th style="padding:6px;">Size</th>
+                                <th style="padding:6px;">Type</th>
+                                <th style="padding:6px;">Health</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+                    data.disks.forEach(d => {
+                        const color = d.health === 'ok' ? '#4caf50' : '#f44336';
+                        html += `<tr style="border-bottom:1px solid var(--divider-color);">
+                            <td style="padding:6px;">${d.bay !== undefined ? d.bay : d.index - 1}</td>
+                            <td style="padding:6px;">${d.model || 'Unknown'}</td>
+                            <td style="padding:6px;">${d.size_gb ? d.size_gb + ' GB' : 'N/A'}</td>
+                            <td style="padding:6px;">${d.media_type || 'Unknown'}</td>
+                            <td style="padding:6px;"><strong style="color:${color};">${d.health_label || d.health}</strong></td>
+                        </tr>`;
+                    });
+                    html += `</tbody></table>`;
+                } else {
+                    const err = data.error || 'Unknown error occurred.';
+                    html += `<div style="color:var(--error-color, #f44336); margin-bottom:1em;"><strong>SNMP Test Failed:</strong> ${err}</div>`;
+                }
+
+                if (data.raw) {
+                    html += `<div style="margin-top:0.5em;">
+                        <button type="button" onclick="copyRawSnmp()" style="background-color:var(--secondary-text-color, #666); color:white; padding:6px 12px; border:none; border-radius:4px; cursor:pointer; margin-bottom:0.5em;">Copy raw SNMP output</button>
+                        <div style="font-size:0.85em; color:var(--secondary-text-color); margin-bottom:0.5em;">
+                            Hint: Raw output contains disk serial numbers. You may redact them before posting to GitHub. Community string is never included.
+                        </div>
+                        <textarea id="raw-snmp-textarea" readonly rows="8" style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.85em; background:var(--input-background-color, #1a1a1a); color:var(--primary-text-color, #fff); border:1px solid var(--divider-color); border-radius:6px; padding:8px;">${data.raw}</textarea>
+                    </div>`;
+                }
+                resultDiv.innerHTML = html;
+            } catch (e) {
+                resultDiv.innerHTML = `<div style="color:var(--error-color, #f44336);"><strong>Request Error:</strong> ${e.message}</div>`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function copyRawSnmp() {
+            const ta = document.getElementById('raw-snmp-textarea');
+            if (ta) {
+                ta.select();
+                navigator.clipboard.writeText(ta.value).then(() => {
+                    alert('Raw SNMP output copied to clipboard!');
+                }).catch(() => {
+                    document.execCommand('copy');
+                    alert('Raw SNMP output copied to clipboard!');
+                });
+            }
         }
 
         // Run on page load to set the initial correct view

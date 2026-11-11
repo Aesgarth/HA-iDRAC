@@ -131,6 +131,37 @@
                             </div>
                         </div>
                     </details>
+                    <details class="form-group" style="grid-column: span 2; margin-top: 0.5em;">
+                        <summary style="cursor: pointer; font-weight: bold;">Disk Health (SNMP)</summary>
+                        <div class="form-grid" style="margin-top: 1em;">
+                            <div class="form-group">
+                                <label for="snmp_enabled">Disk Health Monitoring</label>
+                                <select id="snmp_enabled" name="snmp_enabled">
+                                    <option value="false" selected>Disabled</option>
+                                    <option value="true">Enabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="snmp_community">SNMP Community String</label>
+                                <input type="password" id="snmp_community" name="snmp_community"
+                                    placeholder="e.g. public">
+                            </div>
+                            <div class="form-group">
+                                <label for="snmp_port">SNMP Port</label>
+                                <input type="number" id="snmp_port" name="snmp_port" value="161" min="1" max="65535">
+                            </div>
+                            <div class="form-group">
+                                <label for="disk_poll_minutes">Poll Interval (minutes)</label>
+                                <input type="number" id="disk_poll_minutes" name="disk_poll_minutes" value="10" min="1"
+                                    max="1440">
+                            </div>
+                            <div class="form-group" style="grid-column: span 2;">
+                                <small>Uses the same iDRAC address. Enable the SNMP agent in the iDRAC web page
+                                    (Settings, Services, SNMP Agent). Needs an iDRAC Express or Enterprise licence.
+                                    SNMPv2c sends the community string unencrypted on your network.</small>
+                            </div>
+                        </div>
+                    </details>
                     <div class="form-actions">
                         <button type="submit">Add Server</button>
                     </div>

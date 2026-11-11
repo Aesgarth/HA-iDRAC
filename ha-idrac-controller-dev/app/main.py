@@ -10,6 +10,7 @@ from .fan_logic import SimpleFanState, clamp_speed, validate_fan_config
 from .ipmi_manager import IPMIManager
 from .mqtt_client import MqttClient
 from .adaptive_pid import AdaptiveFanController
+from .disk_health import DiskHealthPoller, walk_physical_disks
 from . import web_server
 
 # --- Global Variables ---
@@ -127,9 +128,33 @@ class ServerWorker:
             self.config.get('base_fan_speed_percent', 20),
             self.config.get('high_temp_fan_speed_percent', 50),
         )
+        self.disk_poller = None
+        self.current_disks = []
+        self.current_disks_summary = None
 
     def _log(self, level, message):
         print(f"[{level.upper()}] [{self.alias}] {message}", flush=True)
+
+    def _on_disks_updated(self, disks, summary):
+        formatted_disks = []
+        if disks:
+            for disk in disks.values():
+                bay_match = re.search(r'Disk\.Bay\.(\d+)', disk.get('fqdn') or '')
+                bay = int(bay_match.group(1)) if bay_match else disk['index'] - 1
+                formatted_disks.append({
+                    "bay": bay,
+                    "model": disk.get("model"),
+                    "size_gb": disk.get("size_gb"),
+                    "media_type": disk.get("media_type"),
+                    "health": disk.get("health"),
+                    "health_label": disk.get("health_label"),
+                })
+        self.current_disks = formatted_disks
+        self.current_disks_summary = summary
+        with status_lock:
+            if self.alias in ALL_SERVERS_STATUS:
+                ALL_SERVERS_STATUS[self.alias]["disks"] = formatted_disks
+                ALL_SERVERS_STATUS[self.alias]["disks_summary"] = summary
 
     def _on_mqtt_message(self, topic, payload):
         command_topic = f"{self.mqtt.base_topic}/command/shutdown"
@@ -144,6 +169,8 @@ class ServerWorker:
         self._log("info", "MQTT connected; subscribing to command topic and re-publishing discovery.")
         self.mqtt.subscribe(f"{self.mqtt.base_topic}/command/shutdown")
         self.discovered_sensors.clear()
+        if self.disk_poller:
+            self.disk_poller.republish_mqtt()
 
     def _initialize(self):
         self._log("info", "Initializing server worker...")
@@ -215,6 +242,36 @@ class ServerWorker:
                 self._log("warning", "MQTT broker not reachable yet; will keep retrying in the background.")
         else:
             self._log("warning", "No MQTT broker configured; Home Assistant entities will not be published.")
+
+        if self.config.get("snmp_enabled", False):
+            community = self.config.get("snmp_community", "")
+            port = self.config.get("snmp_port", 161)
+            poll_mins = self.config.get("disk_poll_minutes", 10)
+            self.disk_poller = DiskHealthPoller(
+                host=self.config.get("idrac_ip"),
+                community=community,
+                port=port,
+                poll_minutes=poll_mins,
+                mqtt_client=self.mqtt,
+                log_fn=self._log,
+                on_update_fn=self._on_disks_updated,
+            )
+            self.disk_poller.start()
+        else:
+            def _probe():
+                try:
+                    disks = walk_physical_disks(
+                        self.config.get("idrac_ip"),
+                        "public",
+                        port=161,
+                        timeout=2,
+                        retries=0,
+                    )
+                    if disks:
+                        self._log("info", "Disk health is available for this server; enable it in the server settings.")
+                except Exception:
+                    pass
+            threading.Thread(target=_probe, daemon=True).start()
 
         return True
 
@@ -366,6 +423,8 @@ class ServerWorker:
                     "actual_fan_rpms": fans,
                     "psu_statuses": psu_statuses,
                     "pid_status": pid_status,
+                    "disks": getattr(self, 'current_disks', []),
+                    "disks_summary": getattr(self, 'current_disks_summary', None),
                 }
 
             self._publish_mqtt_data(status_data)
@@ -440,6 +499,10 @@ class ServerWorker:
                 self.mqtt.publish_state('binary_sensor', slug, state)
 
     def cleanup(self):
+        if self.disk_poller:
+            self.disk_poller.stop()
+            self.disk_poller.join(timeout=3.0)
+
         if self.config.get('fan_control_enabled', True):
             self._log("info", "Worker shutting down. Reverting to Dell auto fans.")
             self.ipmi.apply_dell_fan_control_profile()
@@ -459,6 +522,8 @@ class ServerWorker:
 
     def stop(self):
         self.running = False
+        if self.disk_poller:
+            self.disk_poller.stop()
 
 
 # --- Main Execution ---

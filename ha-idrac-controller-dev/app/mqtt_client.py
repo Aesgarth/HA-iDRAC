@@ -174,6 +174,13 @@ class MqttClient:
 
         self.publish(config_topic, json.dumps(payload), retain=True)
 
+    def remove_discovery(self, component, slug):
+        if not self.device_info_dict:
+            return
+        unique_id = f"{self.device_info_dict['identifiers'][0]}_{slug}"
+        config_topic = f"homeassistant/{component}/{unique_id}/config"
+        self.publish(config_topic, "", retain=True)
+
     def publish_state(self, component, slug, state, attributes=None):
         if not self.is_connected:
             return

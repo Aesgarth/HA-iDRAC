@@ -1,3 +1,7 @@
+## 0.1.0-dev.22 - 2026-11-11
+
+* 🔄 **MQTT Disk State Reliability**: Publish disk states with `retain=True`, republish cached states ~3s after discovery/reconnect to avoid race conditions, and republish cached states every 60s from the poller thread to eliminate persistent "Unknown" states in Home Assistant.
+
 ## 0.1.0-dev.21 - 2026-11-11
 
 * 💾 **Disk Health Monitoring**: Monitor physical disk health, states, and SMART predictive-failure alerts over SNMP (`IDRAC-MIB::physicalDiskTable`) on a dedicated background thread without interfering with fan control.

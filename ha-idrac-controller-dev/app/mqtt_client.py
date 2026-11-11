@@ -181,7 +181,7 @@ class MqttClient:
         config_topic = f"homeassistant/{component}/{unique_id}/config"
         self.publish(config_topic, "", retain=True)
 
-    def publish_state(self, component, slug, state, attributes=None):
+    def publish_state(self, component, slug, state, attributes=None, retain=False):
         if not self.is_connected:
             return
 
@@ -190,6 +190,6 @@ class MqttClient:
             payload = {"state": state}
             if attributes:
                 payload.update(attributes)
-            self.publish(topic, json.dumps(payload))
+            self.publish(topic, json.dumps(payload), retain=retain)
         else:  # binary_sensor, button
-            self.publish(topic, state)
+            self.publish(topic, state, retain=retain)

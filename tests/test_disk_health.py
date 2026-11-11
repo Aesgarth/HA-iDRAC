@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import pytest
 from conftest import load_module
@@ -181,8 +182,8 @@ class MockMqtt:
     def remove_discovery(self, component, slug):
         self.removals.append((component, slug))
 
-    def publish_state(self, component, slug, state, attributes=None):
-        self.states.append((component, slug, state, attributes))
+    def publish_state(self, component, slug, state, attributes=None, retain=False):
+        self.states.append((component, slug, state, attributes, retain))
 
 
 def test_poller_success_publishes_mqtt():
@@ -213,9 +214,11 @@ def test_poller_success_publishes_mqtt():
 
     summary_entry = next(s for s in mqtt.states if s[1] == "disks_summary")
     assert summary_entry[2] == "All 2 disks OK"
+    assert summary_entry[4] is True
 
     prob_entry = next(s for s in mqtt.states if s[1] == "disks_problem")
     assert prob_entry[2] == "OFF"
+    assert prob_entry[4] is True
 
 
 def test_poller_removed_disk_cleanup():
@@ -273,4 +276,124 @@ def test_poller_stop_terminates_promptly():
     poller.stop()
     poller.join(timeout=1.0)
     assert not poller.is_alive()
+
+
+class CapturingFakeMqtt:
+    def __init__(self, base_topic="ha_idrac_controller/r720"):
+        self.is_connected = True
+        self.base_topic = base_topic
+        self.availability_topic = f"{base_topic}/status"
+        self.device_info_dict = {"identifiers": ["idrac_controller_r720"]}
+        self.published = {}
+        self.discoveries = {}
+
+    def publish(self, topic, payload, retain=False, qos=0):
+        self.published[topic] = (payload, retain)
+        return True
+
+    def publish_discovery(self, component, slug, name, device_class=None, unit=None, icon=None,
+                          cmd_topic=None, val_template=None, state_class=None):
+        unique_id = f"{self.device_info_dict['identifiers'][0]}_{slug}"
+        config_topic = f"homeassistant/{component}/{unique_id}/config"
+        payload = {
+            "name": name,
+            "unique_id": unique_id,
+            "availability_topic": self.availability_topic,
+        }
+        if component == "sensor":
+            payload["state_topic"] = f"{self.base_topic}/sensor/{slug}"
+            payload["json_attributes_topic"] = f"{self.base_topic}/sensor/{slug}"
+            payload["value_template"] = "{{ value_json.state }}"
+        elif component == "binary_sensor":
+            payload["state_topic"] = f"{self.base_topic}/binary_sensor/{slug}"
+            payload["payload_on"] = "ON"
+            payload["payload_off"] = "OFF"
+        self.discoveries[slug] = (component, payload)
+        self.publish(config_topic, json.dumps(payload), retain=True)
+
+    def publish_state(self, component, slug, state, attributes=None, retain=False):
+        topic = f"{self.base_topic}/{component}/{slug}"
+        if component == "sensor":
+            payload = {"state": state}
+            if attributes:
+                payload.update(attributes)
+            self.publish(topic, json.dumps(payload), retain=retain)
+        else:
+            self.publish(topic, state, retain=retain)
+
+
+def test_discovery_and_state_publishing_contract():
+    mqtt = CapturingFakeMqtt()
+    logs = []
+    poller = dh.DiskHealthPoller(
+        host="192.168.1.50",
+        community="public",
+        mqtt_client=mqtt,
+        log_fn=lambda lvl, msg: logs.append((lvl, msg)),
+    )
+    disks = dh.parse_walk(make_walk(disks_of(2)))
+    poller._handle_success(disks)
+
+    # 4 entities discovered: 2 disks + 1 summary + 1 problem binary sensor
+    assert len(mqtt.discoveries) == 4
+    assert "disks_summary" in mqtt.discoveries
+    assert "disks_problem" in mqtt.discoveries
+    assert "disk_1_health" in mqtt.discoveries
+    assert "disk_2_health" in mqtt.discoveries
+
+    # Verify discovery-state contract for each entity
+    for slug, (component, disc_payload) in mqtt.discoveries.items():
+        state_topic = disc_payload["state_topic"]
+        assert state_topic in mqtt.published, f"Topic {state_topic} was not published"
+        raw_payload, retain = mqtt.published[state_topic]
+        assert retain is True, f"State for {slug} must be published with retain=True"
+
+        if component == "sensor":
+            assert disc_payload["value_template"] == "{{ value_json.state }}"
+            parsed = json.loads(raw_payload)
+            assert "state" in parsed, f"JSON payload for sensor {slug} missing 'state' key"
+            assert parsed["state"] is not None
+        elif component == "binary_sensor":
+            assert disc_payload["payload_on"] == "ON"
+            assert disc_payload["payload_off"] == "OFF"
+            assert raw_payload in ("ON", "OFF"), f"Binary sensor state must be 'ON' or 'OFF', got {raw_payload}"
+
+    # Verify republishing cached states and debug logging
+    mqtt.published.clear()
+    poller.republish_cached_states(reason="test")
+    assert len(mqtt.published) == 4
+    for slug, (component, disc_payload) in mqtt.discoveries.items():
+        assert disc_payload["state_topic"] in mqtt.published
+        _, retain = mqtt.published[disc_payload["state_topic"]]
+        assert retain is True
+
+    debug_logs = [msg for lvl, msg in logs if lvl == "debug" and "Republished 4 disk states" in msg]
+    assert len(debug_logs) >= 1
+
+
+def test_poller_run_loop_republishes_3s_after_discovery(monkeypatch):
+    import time
+    mqtt = CapturingFakeMqtt()
+    logs = []
+    poller = dh.DiskHealthPoller(
+        host="192.168.1.50",
+        community="public",
+        poll_minutes=10,
+        mqtt_client=mqtt,
+        log_fn=lambda lvl, msg: logs.append((lvl, msg)),
+    )
+    disks = dh.parse_walk(make_walk(disks_of(2)))
+    monkeypatch.setattr(dh, "walk_physical_disks", lambda *a, **k: disks)
+
+    poller.start()
+    # Initial startup settle is 1s, then SNMP walk happens, then 3s delayed republish
+    # Total wait ~4.5s
+    time.sleep(4.5)
+    poller.stop()
+    poller.join(timeout=1.0)
+
+    debug_3s = [msg for lvl, msg in logs if lvl == "debug" and "3s post-discovery" in msg]
+    assert len(debug_3s) == 1
+
+
 

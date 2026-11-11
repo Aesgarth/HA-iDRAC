@@ -61,8 +61,8 @@ def test_fields_are_parsed():
     assert disk["firmware"] == "A1"
     assert disk["size_gb"] == 932
     assert disk["media_type"] == "HDD"
-    assert disk["state"] == "online"
-    assert disk["status"] == "ok"
+    assert disk["raid_state"] == "online"
+    assert disk["component_status"] == "ok"
     assert disk["smart_alert"] == "none"
     assert disk["manufactured"] == "2020-W12"
     assert disk["endurance_remaining"] is None
@@ -394,6 +394,40 @@ def test_poller_run_loop_republishes_3s_after_discovery(monkeypatch):
 
     debug_3s = [msg for lvl, msg in logs if lvl == "debug" and "3s post-discovery" in msg]
     assert len(debug_3s) == 1
+
+
+def test_disk_fields_never_collide_with_mqtt_payload_keys():
+    disk = dh.parse_walk(make_walk(disks_of(1)))[1]
+    assert "state" not in disk and "status" not in disk
+    assert disk["health_label"] == "OK"
+
+
+def test_published_disk_sensor_state_equals_health_label_and_contains_attributes():
+    mqtt = CapturingFakeMqtt()
+    poller = dh.DiskHealthPoller(
+        host="192.168.1.50",
+        community="public",
+        mqtt_client=mqtt,
+    )
+    disks = dh.parse_walk(make_walk(disks_of(1)))
+    poller._publish_disks_mqtt(disks, dh.summarize(disks))
+
+    topic = f"{mqtt.base_topic}/sensor/disk_1_health"
+    assert topic in mqtt.published
+    raw_payload, _ = mqtt.published[topic]
+    data = json.loads(raw_payload)
+
+    # State must equal health_label ("OK"), NOT raid_state ("online")
+    assert data["state"] == "OK"
+    assert data["state"] == disks[1]["health_label"]
+
+    # Must contain model, serial, raid_state, component_status
+    assert data["model"] == "TESTDISK1000"
+    assert data["serial"] == "SER0001"
+    assert data["raid_state"] == "online"
+    assert data["component_status"] == "ok"
+    assert "status" not in data
+
 
 
 

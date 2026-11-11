@@ -1,3 +1,7 @@
+## 0.1.0-dev.23 - 2026-11-11
+
+* 🐛 **Fix**: Renamed disk attribute keys to `raid_state` and `component_status` so the RAID controller status no longer collides with or overwrites the MQTT sensor's `state` value (preventing sensors showing "online" instead of "OK").
+
 ## 0.1.0-dev.22 - 2026-11-11
 
 * 🔄 **MQTT Disk State Reliability**: Publish disk states with `retain=True`, republish cached states ~3s after discovery/reconnect to avoid race conditions, and republish cached states every 60s from the poller thread to eliminate persistent "Unknown" states in Home Assistant.

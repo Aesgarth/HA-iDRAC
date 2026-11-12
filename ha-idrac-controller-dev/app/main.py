@@ -129,6 +129,7 @@ class ServerWorker:
             self.config.get('high_temp_fan_speed_percent', 50),
         )
         self.disk_poller = None
+        self._last_disk_republish_time = 0.0
         self.current_disks = []
         self.current_disks_summary = None
 
@@ -446,10 +447,21 @@ class ServerWorker:
             else:
                 self._sleep(next_run - now)
 
+    def _check_disk_health_freshness(self):
+        if self.disk_poller and self.mqtt.is_connected:
+            now = time.monotonic()
+            if now - self._last_disk_republish_time >= 60.0:
+                self._last_disk_republish_time = now
+                try:
+                    self.disk_poller.check_freshness_and_republish()
+                except Exception as e:
+                    self._log("error", f"Error checking disk freshness: {e}")
+
     def _sleep(self, seconds):
         """Sleep in small steps so SIGTERM can run cleanup promptly."""
         deadline = time.time() + seconds
         while time.time() < deadline and self.running and running:
+            self._check_disk_health_freshness()
             time.sleep(0.2)
 
     def _publish_mqtt_data(self, status):

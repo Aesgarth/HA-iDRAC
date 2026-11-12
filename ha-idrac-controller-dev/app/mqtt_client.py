@@ -135,7 +135,8 @@ class MqttClient:
             return False
 
     def publish_discovery(self, component, slug, name, device_class=None, unit=None, icon=None,
-                          cmd_topic=None, val_template=None, state_class=None):
+                          cmd_topic=None, val_template=None, state_class=None,
+                          entity_category=None, extra_avail_topic=None):
         if not self.device_info_dict:
             return
 
@@ -146,19 +147,28 @@ class MqttClient:
             "name": name,
             "unique_id": unique_id,
             "device": self.device_info_dict,
-            "availability_topic": self.availability_topic,
-            "payload_available": "online",
-            "payload_not_available": "offline",
         }
+
+        if extra_avail_topic:
+            payload["availability"] = [
+                {"topic": self.availability_topic, "payload_available": "online", "payload_not_available": "offline"},
+                {"topic": extra_avail_topic, "payload_available": "online", "payload_not_available": "offline"},
+            ]
+            payload["availability_mode"] = "all"
+        else:
+            payload["availability_topic"] = self.availability_topic
+            payload["payload_available"] = "online"
+            payload["payload_not_available"] = "offline"
 
         if component == 'sensor':
             payload["state_topic"] = f"{self.base_topic}/sensor/{slug}"
             payload["json_attributes_topic"] = f"{self.base_topic}/sensor/{slug}"
-            payload["value_template"] = "{{ value_json.state }}"
+            payload["value_template"] = val_template or "{{ value_json.state }}"
             if state_class:
                 payload["state_class"] = state_class
         elif component == 'binary_sensor':
             payload["state_topic"] = f"{self.base_topic}/binary_sensor/{slug}"
+            payload["json_attributes_topic"] = f"{self.base_topic}/binary_sensor/{slug}/attributes"
             payload["payload_on"] = "ON"
             payload["payload_off"] = "OFF"
         elif component == 'button':
@@ -167,6 +177,8 @@ class MqttClient:
 
         if device_class:
             payload["device_class"] = device_class
+        if entity_category:
+            payload["entity_category"] = entity_category
         if unit:
             payload["unit_of_measurement"] = unit
         if icon:
@@ -191,5 +203,10 @@ class MqttClient:
             if attributes:
                 payload.update(attributes)
             self.publish(topic, json.dumps(payload), retain=retain)
-        else:  # binary_sensor, button
+        elif component == "binary_sensor":
+            self.publish(topic, state, retain=retain)
+            if attributes:
+                attr_topic = f"{self.base_topic}/binary_sensor/{slug}/attributes"
+                self.publish(attr_topic, json.dumps(attributes), retain=retain)
+        else:  # button
             self.publish(topic, state, retain=retain)

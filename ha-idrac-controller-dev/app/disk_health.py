@@ -1,3 +1,4 @@
+import datetime
 import re
 import subprocess
 import threading
@@ -153,26 +154,62 @@ def walk_physical_disks(host, community, port=161, timeout=3, retries=1):
     return disks
 
 
-class DiskHealthPoller(threading.Thread):
+class DiskHealthPoller:
     def __init__(self, host, community, port=161, poll_minutes=10,
                  mqtt_client=None, log_fn=None, on_update_fn=None):
-        super().__init__(name="DiskHealthPoller", daemon=True)
         self.host = host
         self.community = community
         self.port = port or 161
-        self.poll_interval = max(60.0, float(poll_minutes if poll_minutes is not None else 10) * 60.0)
+        self.poll_minutes = float(poll_minutes if poll_minutes is not None else 10)
+        self.poll_interval = max(60.0, self.poll_minutes * 60.0)
         self.mqtt = mqtt_client
         self._log = log_fn or (lambda level, msg: None)
         self.on_update_fn = on_update_fn
         self.stop_event = threading.Event()
 
+        self._thread = None
+        self._started = False
+        self._restarted = False
+        self._start_time = time.time()
+
+        self.last_success = None
         self.consecutive_failures = 0
+        self.last_error = None
+        self.had_problem = False
+        self.is_stale = False
         self.warned_failure = False
+
         self.last_disks = {}
         self.last_summary = None
         self.discovered_disks = set()
         self.discovered_summary = False
         self._republish_needed = threading.Event()
+
+    def start(self):
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._started = True
+        self._thread = threading.Thread(target=self.run, name="DiskHealthPoller", daemon=True)
+        self._thread.start()
+
+    def is_alive(self):
+        return self._thread.is_alive() if self._thread is not None else False
+
+    def join(self, timeout=None):
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+
+    def stop(self):
+        self.stop_event.set()
+
+    def _check_and_restart_poller_thread(self):
+        if self._started and not self.is_alive() and not self._restarted and not self.stop_event.is_set():
+            self._log("warning", "Disk health poller thread is not alive; restarting.")
+            self._restarted = True
+            self._thread = threading.Thread(target=self.run, name="DiskHealthPoller", daemon=True)
+            self._thread.start()
+            return True
+        return False
 
     def run(self):
         # Wait shortly after startup / MQTT connection
@@ -186,7 +223,6 @@ class DiskHealthPoller(threading.Thread):
             self.stop_event.wait(1.0)
 
         next_snmp_poll_time = 0.0
-        next_periodic_republish = time.monotonic() + 60.0
         republish_3s_time = None
 
         while not self.stop_event.is_set():
@@ -200,11 +236,6 @@ class DiskHealthPoller(threading.Thread):
             if republish_3s_time is not None and now >= republish_3s_time:
                 republish_3s_time = None
                 self.republish_cached_states(reason="3s post-discovery")
-
-            if now >= next_periodic_republish:
-                if self.last_disks:
-                    self.republish_cached_states(reason="60s periodic")
-                next_periodic_republish = now + 60.0
 
             if now >= next_snmp_poll_time:
                 try:
@@ -227,14 +258,22 @@ class DiskHealthPoller(threading.Thread):
             remaining = deadline - time.monotonic()
             self.stop_event.wait(min(0.5, max(0.0, remaining)))
 
-    def _handle_success(self, disks):
-        if self.consecutive_failures > 0 and self.warned_failure:
-            self._log("info", f"Disk health monitoring recovered ({len(disks)} disks found).")
+    def _handle_success(self, disks, now=None):
+        current_time = time.time() if now is None else float(now)
+        was_failing = (self.consecutive_failures > 0 or self.is_stale)
         self.consecutive_failures = 0
+        self.last_error = None
         self.warned_failure = False
+        self.is_stale = False
+        self.last_success = current_time
+
         self.last_disks = disks
         summary = summarize(disks)
         self.last_summary = summary
+        self.had_problem = summary["has_problem"]
+
+        if was_failing:
+            self._log("info", f"Disk health monitoring recovered ({len(disks)} disks found).")
 
         prob_str = f"{summary['problem_count']} problem(s)" if summary['has_problem'] else "all OK"
         self._log("debug", f"Disk health poll: {len(disks)} disks, summary: {prob_str}")
@@ -250,32 +289,56 @@ class DiskHealthPoller(threading.Thread):
 
     def _handle_failure(self, err):
         self.consecutive_failures += 1
+        self.last_error = str(err).splitlines()[0][:200]
         if not self.warned_failure:
             self._log("warning", f"Disk health poll failed: {err}")
             self.warned_failure = True
 
         if self.consecutive_failures >= 3:
-            self._publish_unknown_states()
+            self.is_stale = True
+            if self.mqtt and getattr(self.mqtt, "is_connected", False):
+                self.check_freshness_and_republish(reason="3 failures")
 
-    def _ensure_discovery(self, disks, summary):
+    def _ensure_discovery(self, disks=None, summary=None):
         if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
             return
 
         if not self.discovered_summary:
-            self.mqtt.publish_discovery("sensor", "disks_summary", "Disks summary", icon="mdi:harddisk")
-            self.mqtt.publish_discovery("binary_sensor", "disks_problem", "Disks problem", device_class="problem")
+            summary_avail = f"{self.mqtt.base_topic}/sensor/disks_summary/availability"
+            self.mqtt.publish_discovery(
+                "sensor", "disks_summary", "Disks summary",
+                icon="mdi:harddisk", extra_avail_topic=summary_avail
+            )
+            self.mqtt.publish_discovery(
+                "binary_sensor", "disks_problem", "Disks problem",
+                device_class="problem"
+            )
+            self.mqtt.publish_discovery(
+                "binary_sensor", "disk_monitoring_failing", "Disk monitoring failing",
+                device_class="problem", entity_category="diagnostic"
+            )
+            self.mqtt.publish_discovery(
+                "sensor", "disks_last_checked", "Disks last checked",
+                device_class="timestamp", entity_category="diagnostic"
+            )
             self.discovered_summary = True
 
-        current_indices = set(disks.keys())
-        for index, disk in disks.items():
-            slug = f"disk_{index}_health"
-            bay_match = re.search(r'Disk\.Bay\.(\d+)', disk.get('fqdn') or '')
-            bay = int(bay_match.group(1)) if bay_match else index - 1
-            name = f"Disk {bay} health"
+        disks = disks or self.last_disks
+        current_indices = set(disks.keys()) if disks else set()
+        if disks:
+            for index, disk in disks.items():
+                slug = f"disk_{index}_health"
+                bay_match = re.search(r'Disk\.Bay\.(\d+)', disk.get('fqdn') or '')
+                bay = int(bay_match.group(1)) if bay_match else index - 1
+                name = f"Disk {bay} health"
 
-            if index not in self.discovered_disks:
-                self.mqtt.publish_discovery("sensor", slug, name, icon="mdi:harddisk")
-                self.discovered_disks.add(index)
+                if index not in self.discovered_disks:
+                    disk_avail = f"{self.mqtt.base_topic}/sensor/{slug}/availability"
+                    self.mqtt.publish_discovery(
+                        "sensor", slug, name,
+                        icon="mdi:harddisk", extra_avail_topic=disk_avail
+                    )
+                    self.discovered_disks.add(index)
 
         # Cleanup removed disks
         removed_indices = self.discovered_disks - current_indices
@@ -285,9 +348,49 @@ class DiskHealthPoller(threading.Thread):
                 self.mqtt.remove_discovery("sensor", slug)
             self.discovered_disks.discard(removed_idx)
 
-    def _publish_states(self, disks, summary):
+    def _set_sensors_availability(self, online=True):
         if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
             return
+        payload = "online" if online else "offline"
+        summary_avail_topic = f"{self.mqtt.base_topic}/sensor/disks_summary/availability"
+        self.mqtt.publish(summary_avail_topic, payload, retain=True)
+
+        for index in self.discovered_disks:
+            disk_avail_topic = f"{self.mqtt.base_topic}/sensor/disk_{index}_health/availability"
+            self.mqtt.publish(disk_avail_topic, payload, retain=True)
+
+    def _publish_diagnostics(self):
+        if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
+            return
+        is_failing = self.is_stale or (self.consecutive_failures >= 3)
+        iso_last_success = (
+            datetime.datetime.fromtimestamp(self.last_success, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if self.last_success is not None else None
+        )
+        failing_attrs = {
+            "last_success": iso_last_success,
+            "last_error": self.last_error,
+            "consecutive_failures": self.consecutive_failures,
+        }
+        self.mqtt.publish_state(
+            "binary_sensor", "disk_monitoring_failing",
+            "ON" if is_failing else "OFF",
+            attributes=failing_attrs,
+            retain=True
+        )
+        if iso_last_success is not None:
+            self.mqtt.publish_state("sensor", "disks_last_checked", iso_last_success, retain=True)
+        else:
+            self.mqtt.publish_state("sensor", "disks_last_checked", "unknown", retain=True)
+
+    def _publish_states(self, disks, summary, stale=False):
+        if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
+            return
+
+        iso_last_success = (
+            datetime.datetime.fromtimestamp(self.last_success, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if self.last_success is not None else None
+        )
 
         # 1. Summary sensor
         summary_state = (
@@ -295,14 +398,27 @@ class DiskHealthPoller(threading.Thread):
             if summary['problem_count'] == 0
             else f"{summary['problem_count']} problem(s)"
         )
-        self.mqtt.publish_state("sensor", "disks_summary", summary_state, {
+        summary_attrs = {
             "count": summary["count"],
             "problem_count": summary["problem_count"],
             "problems": summary["problems"],
-        }, retain=True)
+        }
+        if stale:
+            summary_attrs["stale"] = True
+            summary_attrs["last_success"] = iso_last_success
+        self.mqtt.publish_state("sensor", "disks_summary", summary_state, summary_attrs, retain=True)
 
         # 2. Binary sensor
-        self.mqtt.publish_state("binary_sensor", "disks_problem", "ON" if summary["has_problem"] else "OFF", retain=True)
+        prob_attrs = {}
+        if stale:
+            prob_attrs["stale"] = True
+            prob_attrs["last_success"] = iso_last_success
+        self.mqtt.publish_state(
+            "binary_sensor", "disks_problem",
+            "ON" if summary["has_problem"] else "OFF",
+            attributes=prob_attrs if prob_attrs else None,
+            retain=True
+        )
 
         # 3. Per disk sensor
         for index, disk in disks.items():
@@ -320,28 +436,56 @@ class DiskHealthPoller(threading.Thread):
                 "endurance_remaining": disk.get("endurance_remaining"),
                 "slot": disk.get("slot"),
             }
+            if stale:
+                attrs["stale"] = True
+                attrs["last_success"] = iso_last_success
             self.mqtt.publish_state("sensor", slug, disk.get("health_label", "Unknown"), attrs, retain=True)
 
-    def republish_cached_states(self, reason="cached"):
-        if not self.mqtt or not getattr(self.mqtt, "is_connected", False) or not self.last_disks:
+    def check_freshness_and_republish(self, now=None, reason="periodic"):
+        if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
             return
-        summary = self.last_summary or summarize(self.last_disks)
-        self._publish_states(self.last_disks, summary)
-        total = len(self.last_disks) + 2
-        self._log("debug", f"Republished {total} disk states to MQTT ({reason})")
+
+        current_time = time.time() if now is None else float(now)
+
+        # Restart thread once if dead
+        self._check_and_restart_poller_thread()
+
+        stale_limit = max(3.0 * self.poll_minutes * 60.0, 1800.0)
+        ref_time = self.last_success if self.last_success is not None else self._start_time
+        time_stale = (current_time - ref_time) > stale_limit
+        fail_stale = self.consecutive_failures >= 3
+        self.is_stale = time_stale or fail_stale
+
+        self._ensure_discovery(self.last_disks, self.last_summary)
+
+        if self.is_stale:
+            if not self.had_problem:
+                self._set_sensors_availability(online=False)
+                # Do NOT keep republishing cached "OK"
+            else:
+                self._set_sensors_availability(online=True)
+                if self.last_disks:
+                    summary = self.last_summary or summarize(self.last_disks)
+                    self._publish_states(self.last_disks, summary, stale=True)
+        else:
+            self._set_sensors_availability(online=True)
+            if self.last_disks:
+                summary = self.last_summary or summarize(self.last_disks)
+                self._publish_states(self.last_disks, summary, stale=False)
+
+        self._publish_diagnostics()
+        if not (self.is_stale and not self.had_problem) and self.last_disks:
+            total = len(self.last_disks) + 4
+            self._log("debug", f"Republished {total} disk states to MQTT ({reason})")
+
+    def republish_cached_states(self, reason="cached"):
+        self.check_freshness_and_republish(reason=reason)
 
     def _publish_disks_mqtt(self, disks, summary):
         self._ensure_discovery(disks, summary)
-        self._publish_states(disks, summary)
-
-    def _publish_unknown_states(self):
-        if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
-            return
-        if self.discovered_summary:
-            self.mqtt.publish_state("sensor", "disks_summary", "Unknown", retain=True)
-            self.mqtt.publish_state("binary_sensor", "disks_problem", "OFF", retain=True)
-        for index in self.discovered_disks:
-            self.mqtt.publish_state("sensor", f"disk_{index}_health", "Unknown", retain=True)
+        self._set_sensors_availability(online=True)
+        self._publish_states(disks, summary, stale=False)
+        self._publish_diagnostics()
 
     def republish_mqtt(self):
         self._republish_needed.set()

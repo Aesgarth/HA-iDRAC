@@ -1,3 +1,14 @@
+## 0.1.0-dev.24 - 2026-11-12
+
+* 🛡️ **Disk Monitoring Staleness Safety Net**:
+  * Track per-server metrics: `last_success` timestamp, `consecutive_failures`, `last_error`, and `had_problem`.
+  * Independent freshness check outside the poller thread in the 60s periodic loop: marks disk data stale when `now - last_success > max(3 * disk_poll_minutes, 30 minutes)` or when `consecutive_failures >= 3`.
+  * Automatically detects hung or dead poller threads, restarts them once, and logs a warning.
+  * When stale and previously healthy: marks per-disk health sensors and Disks summary sensor unavailable (`offline` via dedicated per-entity availability topic with `availability_mode: "all"`), preventing stale cached "OK" republishing.
+  * When stale and previously had a problem: retains problem state and keeps `binary_sensor.disks_problem` ON with `stale=True` and `last_success` attributes so critical disk problems are never masked.
+  * Added diagnostic entities: `binary_sensor.disk_monitoring_failing` (device_class: problem, entity_category: diagnostic) and `sensor.disks_last_checked` (device_class: timestamp, entity_category: diagnostic).
+  * Smooth recovery: immediately restores availability, clears failure counters, and publishes fresh states upon successful poll.
+
 ## 0.1.0-dev.23 - 2026-11-11
 
 * 🐛 **Fix**: Renamed disk attribute keys to `raid_state` and `component_status` so the RAID controller status no longer collides with or overwrites the MQTT sensor's `state` value (preventing sensors showing "online" instead of "OK").

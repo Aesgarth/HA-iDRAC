@@ -93,6 +93,14 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label for="on_fan_fault">On fan fault</label>
+                        <select id="on_fan_fault" name="on_fan_fault">
+                            <option value="dell_auto" selected>Dell Auto (recommended)</option>
+                            <option value="raise_fans">Raise working fans to 80%+</option>
+                            <option value="alert_only">Alert only</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label for="base_fan_speed_percent">Base Fan Speed (%)</label>
                         <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent"
                             value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">

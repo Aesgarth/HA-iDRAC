@@ -8,6 +8,7 @@ import threading
 import time
 
 from .fan_logic import SimpleFanState, clamp_speed, validate_fan_config
+from .fan_health import FanMonitor
 from .ipmi_manager import IPMIManager
 from .mqtt_client import MqttClient
 from .adaptive_pid import AdaptiveFanController
@@ -144,6 +145,16 @@ class ServerWorker:
         self._last_disk_republish_time = 0.0
         self.current_disks = []
         self.current_disks_summary = None
+
+        self.fan_monitor = FanMonitor(poll_seconds=self.poll_interval)
+        self._fan_fault_prev_ok = True
+        self._fan_fault_last_fault_time = None
+        self._fan_fault_dell_auto_latched = False
+        self._fan_fault_status = {"faulty": {}, "ok": True}
+        self._fan_fault_description = "OK"
+        self._fan_readings = {}
+        self._fan_republish_at = None
+        self._last_mqtt_status = None
 
     def _log(self, level, message):
         print(f"[{level.upper()}] [{self.alias}] {message}", flush=True)
@@ -321,88 +332,16 @@ class ServerWorker:
                 self.mqtt.publish(self.mqtt.availability_topic, "online", retain=True)
 
             temps = self.ipmi.parse_temperatures(raw_temp_data)
-            fans = self.ipmi.parse_fan_rpms(self.ipmi.retrieve_fan_rpms_raw())
+            raw_fan_data = self.ipmi.retrieve_fan_rpms_raw()
+            fans = self.ipmi.parse_fan_rpms(raw_fan_data)
+            fan_readings = self.ipmi.parse_fan_readings(raw_fan_data)
+            self.evaluate_fan_health(fan_readings)
             power_sdr_data = self.ipmi.retrieve_power_sdr_raw()
             power = self.ipmi.parse_power_consumption(power_sdr_data)
             psu_statuses = self.ipmi.get_power_status(power_sdr_data)
 
             hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
-            target_fan_speed = "Dell Auto"
-
-            if not self.config.get('fan_control_enabled', True):
-                self._log("info", "Fan control is disabled for this server; leaving the iDRAC fan settings untouched.")
-                target_fan_speed = "Monitor only"
-            elif self.ipmi.fan_control_refused:
-                target_fan_speed = "Dell Auto (refused)"
-            elif hottest_cpu is None:
-                self._log("warning", "No CPU temperature sensor found; handing fans back to the iDRAC for safety.")
-                self.ipmi.apply_dell_fan_control_profile()
-                target_fan_speed = "Dell Auto (no CPU sensor)"
-            else:
-                crit_thresh = self.fan_cfg["critical"]
-                if self.fan_state.should_use_auto(hottest_cpu, crit_thresh):
-                    self.ipmi.apply_dell_fan_control_profile()
-                    target_fan_speed = "Dell Auto"
-                else:
-                    fan_mode = self.config.get('fan_mode', 'simple')
-
-                    if fan_mode == 'simple':
-                        low_thresh = self.fan_cfg["low"]
-                        target_fan_speed = self.fan_state.simple_speed(
-                            hottest_cpu,
-                            low_thresh,
-                            self.fan_cfg["base"],
-                            self.fan_cfg["high"],
-                        )
-                        if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
-                            target_fan_speed = "Dell Auto (fan command failed)"
-
-                    elif fan_mode == 'target':
-                        inlet = temps.get('inlet_temp')
-                        speed = self.pid.update(hottest_cpu, inlet, power)
-                        feed_speed = self.pid.last_feedforward if self.pid.last_feedforward is not None else 0.0
-                        self._log(
-                            "debug",
-                            f"PID update: temp={hottest_cpu}°C, inlet={inlet}°C, power={power}W, "
-                            f"feedforward={feed_speed:.1f}%, trim={self.pid.trim:.2f}%, "
-                            f"theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}, "
-                            f"overcooled={self.pid.overcooled}, fan_power={self.pid.fan_power_k:.1f}W",
-                        )
-                        if speed is not None:
-                            target_fan_speed = clamp_speed(
-                                speed,
-                                minimum=int(self.pid.min_speed),
-                                maximum=int(self.pid.max_speed),
-                            )
-                            if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
-                                target_fan_speed = "Dell Auto (fan command failed)"
-                            else:
-                                self._last_target_fan_speed = target_fan_speed
-                        else:
-                            target_fan_speed = getattr(self, '_last_target_fan_speed', "Target (in deadband)")
-
-                    elif fan_mode == 'curve':
-                        fan_curve = self.config.get('fan_curve', [])
-                        if len(fan_curve) >= 2:
-                            lower, upper = fan_curve[0], fan_curve[-1]
-                            for i in range(len(fan_curve) - 1):
-                                if fan_curve[i]['temp'] <= hottest_cpu < fan_curve[i + 1]['temp']:
-                                    lower, upper = fan_curve[i], fan_curve[i + 1]
-                                    break
-
-                            if hottest_cpu < lower['temp']:
-                                speed = lower['speed']
-                            elif hottest_cpu >= upper['temp']:
-                                speed = upper['speed']
-                            else:
-                                temp_range = upper['temp'] - lower['temp']
-                                speed_range = upper['speed'] - lower['speed']
-                                speed = (lower['speed'] + ((hottest_cpu - lower['temp']) / temp_range * speed_range)
-                                         if temp_range > 0 else lower['speed'])
-
-                            target_fan_speed = clamp_speed(speed)
-                            if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
-                                target_fan_speed = "Dell Auto (fan command failed)"
+            target_fan_speed = self._apply_fan_policy(hottest_cpu, temps, power)
 
             fan_mode = self.config.get('fan_mode', 'simple')
             pid_status = (
@@ -421,6 +360,9 @@ class ServerWorker:
                 "fans": fans,
                 "psus": psu_statuses,
                 "pid_status": pid_status,
+                "fan_ok": self._fan_fault_status.get("ok", True),
+                "fan_status": self._fan_fault_description,
+                "fan_readings": fan_readings,
             }
             with status_lock:
                 ALL_SERVERS_STATUS[self.alias] = {
@@ -438,6 +380,8 @@ class ServerWorker:
                     "pid_status": pid_status,
                     "disks": getattr(self, 'current_disks', []),
                     "disks_summary": getattr(self, 'current_disks_summary', None),
+                    "fan_fault": not self._fan_fault_status.get("ok", True),
+                    "fan_status": self._fan_fault_description,
                 }
 
             self._publish_mqtt_data(status_data)
@@ -459,6 +403,126 @@ class ServerWorker:
             else:
                 self._sleep(next_run - now)
 
+    def evaluate_fan_health(self, readings, now=None):
+        """Update FanMonitor with {fan_name: rpm_or_None} and track fault state."""
+        now = time.monotonic() if now is None else now
+        if self.fan_monitor.poll_seconds != self.poll_interval:
+            self.fan_monitor.set_poll_seconds(self.poll_interval)
+        self._fan_readings = dict(readings)
+        result = self.fan_monitor.update(now, readings)
+        self._fan_fault_status = result
+        self._fan_fault_description = self.fan_monitor.describe()
+
+        if not result["ok"]:
+            self._fan_fault_last_fault_time = now
+            if self._fan_fault_prev_ok:
+                self._log("warning", f"Fan fault detected: {self._fan_fault_description}")
+            self._fan_fault_prev_ok = False
+        else:
+            if not self._fan_fault_prev_ok:
+                self._log("info", "Fan fault cleared; all fans healthy.")
+            self._fan_fault_prev_ok = True
+        return result
+
+    def _apply_fan_policy(self, hottest_cpu, temps, power, now=None):
+        """Compute and apply fan speed while enforcing the server's on_fan_fault policy."""
+        now = time.monotonic() if now is None else now
+        if not self.config.get('fan_control_enabled', True):
+            self._log("info", "Fan control is disabled for this server; leaving the iDRAC fan settings untouched.")
+            return "Monitor only"
+        if self.ipmi.fan_control_refused:
+            return "Dell Auto (refused)"
+
+        policy = self.config.get("on_fan_fault", "dell_auto")
+        fan_ok = self._fan_fault_status.get("ok", True)
+
+        if policy == "dell_auto":
+            if not fan_ok:
+                if not self._fan_fault_dell_auto_latched:
+                    self._fan_fault_dell_auto_latched = True
+                    self.ipmi.apply_dell_fan_control_profile(force=True)
+                return "Dell Auto (fan fault)"
+            if self._fan_fault_dell_auto_latched:
+                if (self._fan_fault_last_fault_time is not None
+                        and (now - self._fan_fault_last_fault_time) >= 600.0):
+                    self._fan_fault_dell_auto_latched = False
+                else:
+                    return "Dell Auto (fan fault cooldown)"
+
+        if hottest_cpu is None:
+            self._log("warning", "No CPU temperature sensor found; handing fans back to the iDRAC for safety.")
+            self.ipmi.apply_dell_fan_control_profile()
+            return "Dell Auto (no CPU sensor)"
+
+        crit_thresh = self.fan_cfg["critical"]
+        if self.fan_state.should_use_auto(hottest_cpu, crit_thresh):
+            self.ipmi.apply_dell_fan_control_profile()
+            return "Dell Auto"
+
+        fan_mode = self.config.get('fan_mode', 'simple')
+        target_fan_speed = "Dell Auto"
+
+        if fan_mode == 'simple':
+            low_thresh = self.fan_cfg["low"]
+            target_fan_speed = self.fan_state.simple_speed(
+                hottest_cpu,
+                low_thresh,
+                self.fan_cfg["base"],
+                self.fan_cfg["high"],
+            )
+        elif fan_mode == 'target':
+            inlet = temps.get('inlet_temp')
+            speed = self.pid.update(hottest_cpu, inlet, power)
+            feed_speed = self.pid.last_feedforward if self.pid.last_feedforward is not None else 0.0
+            self._log(
+                "debug",
+                f"PID update: temp={hottest_cpu}°C, inlet={inlet}°C, power={power}W, "
+                f"feedforward={feed_speed:.1f}%, trim={self.pid.trim:.2f}%, "
+                f"theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}, "
+                f"overcooled={self.pid.overcooled}, fan_power={self.pid.fan_power_k:.1f}W",
+            )
+            if speed is not None:
+                target_fan_speed = clamp_speed(
+                    speed,
+                    minimum=int(self.pid.min_speed),
+                    maximum=int(self.pid.max_speed),
+                )
+            else:
+                target_fan_speed = getattr(self, '_last_target_fan_speed', "Target (in deadband)")
+        elif fan_mode == 'curve':
+            fan_curve = self.config.get('fan_curve', [])
+            if len(fan_curve) >= 2:
+                lower, upper = fan_curve[0], fan_curve[-1]
+                for i in range(len(fan_curve) - 1):
+                    if fan_curve[i]['temp'] <= hottest_cpu < fan_curve[i + 1]['temp']:
+                        lower, upper = fan_curve[i], fan_curve[i + 1]
+                        break
+
+                if hottest_cpu < lower['temp']:
+                    speed = lower['speed']
+                elif hottest_cpu >= upper['temp']:
+                    speed = upper['speed']
+                else:
+                    temp_range = upper['temp'] - lower['temp']
+                    speed_range = upper['speed'] - lower['speed']
+                    speed = (lower['speed'] + ((hottest_cpu - lower['temp']) / temp_range * speed_range)
+                             if temp_range > 0 else lower['speed'])
+
+                target_fan_speed = clamp_speed(speed)
+
+        if policy == "raise_fans" and not fan_ok:
+            if isinstance(target_fan_speed, (int, float)):
+                target_fan_speed = max(int(target_fan_speed), 80)
+            else:
+                target_fan_speed = 80
+
+        if isinstance(target_fan_speed, (int, float)):
+            if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
+                return "Dell Auto (fan command failed)"
+            if fan_mode == 'target':
+                self._last_target_fan_speed = target_fan_speed
+        return target_fan_speed
+
     def _check_disk_health_freshness(self):
         if self.disk_poller and self.mqtt.is_connected:
             now = time.monotonic()
@@ -469,16 +533,36 @@ class ServerWorker:
                 except Exception as e:
                     self._log("error", f"Error checking disk freshness: {e}")
 
+    def _check_fan_republish(self):
+        if (self._fan_republish_at is not None and time.monotonic() >= self._fan_republish_at
+                and self.mqtt.is_connected and self._last_mqtt_status is not None):
+            self._fan_republish_at = None
+            self._publish_fan_health_mqtt(self._last_mqtt_status)
+
     def _sleep(self, seconds):
         """Sleep in small steps so SIGTERM can run cleanup promptly."""
         deadline = time.time() + seconds
         while time.time() < deadline and self.running and running:
             self._check_disk_health_freshness()
+            self._check_fan_republish()
             time.sleep(0.2)
+
+    def _publish_fan_health_mqtt(self, status):
+        if not self.mqtt.is_connected:
+            return
+        fan_state = "ON" if not status.get("fan_ok", True) else "OFF"
+        self.mqtt.publish_state("binary_sensor", "fan_fault", fan_state, retain=True)
+        attrs = {
+            (f"{k}_rpm" if k.lower() == "state" else k): v
+            for k, v in status.get("fan_readings", {}).items()
+        }
+        self.mqtt.publish_state("sensor", "fan_status", status.get("fan_status", "OK"), attrs, retain=True)
 
     def _publish_mqtt_data(self, status):
         if not self.mqtt.is_connected:
             return
+
+        self._last_mqtt_status = status
 
         sensors = {
             "shutdown_button": {"component": "button", "name": "Shutdown Server", "device_class": "restart", "icon": "mdi:server-off"},
@@ -487,6 +571,8 @@ class ServerWorker:
             "exhaust_temp": {"component": "sensor", "device_class": "temperature", "unit": "°C", "state_class": "measurement"},
             "power": {"component": "sensor", "device_class": "power", "unit": "W", "state_class": "measurement", "icon": "mdi:flash"},
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
+            "fan_fault": {"component": "binary_sensor", "name": "Fan fault", "device_class": "problem"},
+            "fan_status": {"component": "sensor", "name": "Fan status", "icon": "mdi:fan-alert"},
         }
         for i, _ in enumerate(status.get('cpus', [])):
             sensors[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C", "state_class": "measurement"}
@@ -495,6 +581,7 @@ class ServerWorker:
         for psu in status.get('psus', []):
             sensors[f"psu_{re.sub(r'[^a-zA-Z0-9_]+', '', psu['name']).lower()}"] = {"component": "binary_sensor", "name": psu['name'], "device_class": "problem"}
 
+        newly_discovered_fan = False
         for slug, desc in sensors.items():
             if slug not in self.discovered_sensors:
                 cmd_topic = f"{self.mqtt.base_topic}/command/shutdown" if desc['component'] == 'button' else None
@@ -504,8 +591,12 @@ class ServerWorker:
                     cmd_topic, None, desc.get('state_class'),
                 )
                 self.discovered_sensors.add(slug)
+                if slug in ("fan_fault", "fan_status"):
+                    newly_discovered_fan = True
 
-            if desc['component'] == 'sensor':
+            if slug in ("fan_fault", "fan_status"):
+                continue
+            elif desc['component'] == 'sensor':
                 value = None
                 if slug.startswith('fan_'):
                     value = next((f['rpm'] for f in status['fans']
@@ -521,6 +612,10 @@ class ServerWorker:
                 psu_data = next((p for p in status['psus'] if p['name'] == psu_name), None)
                 state = "ON" if psu_data and not psu_data['ok'] else "OFF"
                 self.mqtt.publish_state('binary_sensor', slug, state)
+
+        self._publish_fan_health_mqtt(status)
+        if newly_discovered_fan:
+            self._fan_republish_at = time.monotonic() + 3.0
 
     def cleanup(self):
         if self.disk_poller:

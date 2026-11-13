@@ -336,6 +336,43 @@ class IPMIManager:
                 continue
         return fans
 
+    def parse_fan_readings(self, sdr_data):
+        """Return {fan_name: rpm_or_None} for physical fan sensors.
+
+        Excludes pseudo-sensors such as redundancy or presence.
+        A fan sensor with no reading / 'na' / 'ns' is mapped to None.
+        """
+        readings = {}
+        if not sdr_data:
+            return readings
+
+        for line in sdr_data.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parts = [p.strip() for p in stripped.split("|")]
+            if len(parts) < 5:
+                continue
+            name, _sensor_id, status, _entity, value_str = parts[:5]
+            if not name:
+                continue
+            lower_name = name.lower()
+            if "redundancy" in lower_name or "presence" in lower_name:
+                continue
+
+            match = _FAN_LINE_RE.match(stripped)
+            if match:
+                try:
+                    readings[name] = int(float(match.group("value")))
+                except ValueError:
+                    readings[name] = None
+            else:
+                val_lower = value_str.lower()
+                if (status.lower() == "ns" or not val_lower
+                        or "no reading" in val_lower or val_lower == "na"):
+                    readings[name] = None
+        return readings
+
     def retrieve_power_sdr_raw(self):
         self._log("debug", "Retrieving raw power SDR data...")
         return self._run_ipmi_command(["sdr", "elist"], is_raw_command=False, timeout=20)

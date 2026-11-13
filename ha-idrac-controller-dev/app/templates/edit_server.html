@@ -45,6 +45,17 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label for="on_fan_fault">On fan fault</label>
+                        <select id="on_fan_fault" name="on_fan_fault">
+                            <option value="dell_auto" {% if server.on_fan_fault=='dell_auto' or not server.on_fan_fault
+                                %}selected{% endif %}>Dell Auto (recommended)</option>
+                            <option value="raise_fans" {% if server.on_fan_fault=='raise_fans' %}selected{% endif %}>
+                                Raise working fans to 80%+</option>
+                            <option value="alert_only" {% if server.on_fan_fault=='alert_only' %}selected{% endif %}>
+                                Alert only</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label for="poll_interval_seconds">Poll Interval (seconds)</label>
                         <input type="number" id="poll_interval_seconds" name="poll_interval_seconds"
                             value="{{ server.poll_interval_seconds if server.poll_interval_seconds is not none and server.poll_interval_seconds != '' else '' }}"

@@ -71,6 +71,12 @@ def _parse_poll_interval(val):
         return None
 
 
+def _parse_on_fan_fault(val):
+    if val in ("dell_auto", "raise_fans", "alert_only"):
+        return val
+    return "dell_auto"
+
+
 def _parse_disk_poll_minutes(val):
     if val is None or (isinstance(val, str) and val.strip() == ""):
         return 10
@@ -219,6 +225,7 @@ def add_server():
         "enabled": True,
         "fan_control_enabled": request.form.get('fan_control_enabled') == 'true',
         "disable_pcie_cooling_response": request.form.get('disable_pcie_cooling_response') == 'true',
+        "on_fan_fault": _parse_on_fan_fault(request.form.get('on_fan_fault')),
         "snmp_enabled": request.form.get('snmp_enabled') in ('true', 'on', '1'),
         "snmp_community": snmp_comm,
         "snmp_port": _parse_snmp_port(request.form.get('snmp_port')),
@@ -260,6 +267,7 @@ def edit_server_form(alias):
             pid_cfg['ramp_down_percent_per_min'] = 4
         server_to_edit.setdefault('fan_control_enabled', True)
         server_to_edit.setdefault('disable_pcie_cooling_response', False)
+        server_to_edit.setdefault('on_fan_fault', 'dell_auto')
         server_to_edit.setdefault('snmp_enabled', False)
         server_to_edit.setdefault('snmp_community', '')
         server_to_edit.setdefault('snmp_port', 161)
@@ -285,6 +293,7 @@ def update_server(alias):
     server_to_update['enabled'] = request.form.get('enabled') == 'true'
     server_to_update['fan_control_enabled'] = request.form.get('fan_control_enabled') == 'true'
     server_to_update['disable_pcie_cooling_response'] = request.form.get('disable_pcie_cooling_response') == 'true'
+    server_to_update['on_fan_fault'] = _parse_on_fan_fault(request.form.get('on_fan_fault'))
     server_to_update['snmp_enabled'] = request.form.get('snmp_enabled') in ('true', 'on', '1')
     new_community = request.form.get('snmp_community')
     if new_community is not None and new_community.strip() != "":

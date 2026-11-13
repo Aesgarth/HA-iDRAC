@@ -15,7 +15,12 @@
         {% if servers %}
         {% for server in servers %}
         <div class="container server-card">
-            <h2>{{ server.alias }} <small>({{ server.ip }})</small></h2>
+            <h2>
+                {{ server.alias }} <small>({{ server.ip }})</small>
+                {% if server.fan_fault %}
+                <span class="health-badge health-failed">Fan Fault: {{ server.fan_status }}</span>
+                {% endif %}
+            </h2>
             <p><em>Last updated: <strong>{{ server.last_updated }}</strong></em></p>
 
             <div class="status-grid">

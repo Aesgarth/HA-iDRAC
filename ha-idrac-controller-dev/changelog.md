@@ -1,3 +1,7 @@
+## 0.1.0-dev.27 - 2026-11-13
+
+* Fan failure detection
+
 ## 0.1.0-dev.26 - 2026-11-13
 
 * PID v3: scaled emergency, fan power compensation

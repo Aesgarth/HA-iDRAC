@@ -77,6 +77,14 @@ def _parse_on_fan_fault(val):
     return "dell_auto"
 
 
+def _parse_min_safe_fan_speed(val):
+    try:
+        parsed = int(val)
+    except (TypeError, ValueError):
+        return 20
+    return max(5, min(100, parsed))
+
+
 def _parse_disk_poll_minutes(val):
     if val is None or (isinstance(val, str) and val.strip() == ""):
         return 10
@@ -226,6 +234,7 @@ def add_server():
         "fan_control_enabled": request.form.get('fan_control_enabled') == 'true',
         "disable_pcie_cooling_response": request.form.get('disable_pcie_cooling_response') == 'true',
         "on_fan_fault": _parse_on_fan_fault(request.form.get('on_fan_fault')),
+        "min_safe_fan_speed": _parse_min_safe_fan_speed(request.form.get('min_safe_fan_speed')),
         "snmp_enabled": request.form.get('snmp_enabled') in ('true', 'on', '1'),
         "snmp_community": snmp_comm,
         "snmp_port": _parse_snmp_port(request.form.get('snmp_port')),
@@ -268,6 +277,7 @@ def edit_server_form(alias):
         server_to_edit.setdefault('fan_control_enabled', True)
         server_to_edit.setdefault('disable_pcie_cooling_response', False)
         server_to_edit.setdefault('on_fan_fault', 'dell_auto')
+        server_to_edit.setdefault('min_safe_fan_speed', 20)
         server_to_edit.setdefault('snmp_enabled', False)
         server_to_edit.setdefault('snmp_community', '')
         server_to_edit.setdefault('snmp_port', 161)
@@ -294,6 +304,7 @@ def update_server(alias):
     server_to_update['fan_control_enabled'] = request.form.get('fan_control_enabled') == 'true'
     server_to_update['disable_pcie_cooling_response'] = request.form.get('disable_pcie_cooling_response') == 'true'
     server_to_update['on_fan_fault'] = _parse_on_fan_fault(request.form.get('on_fan_fault'))
+    server_to_update['min_safe_fan_speed'] = _parse_min_safe_fan_speed(request.form.get('min_safe_fan_speed'))
     server_to_update['snmp_enabled'] = request.form.get('snmp_enabled') in ('true', 'on', '1')
     new_community = request.form.get('snmp_community')
     if new_community is not None and new_community.strip() != "":

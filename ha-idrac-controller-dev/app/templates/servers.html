@@ -127,6 +127,16 @@
                         <small>Seconds between readings. 10 is a good value for PID mode; very small values load the
                             iDRAC.</small>
                     </div>
+                    <div class="form-group">
+                        <label for="min_safe_fan_speed">Minimum safe fan speed (%)</label>
+                        <input type="number" id="min_safe_fan_speed" name="min_safe_fan_speed" value="20" min="5"
+                            max="100"
+                            oninput="document.getElementById('min_safe_fan_speed_warn').style.display = (this.value !== '' && Number(this.value) < 15) ? 'block' : 'none';">
+                        <small>Because Dell manual mode has no timeout, fans stay at or above this speed if the add-on
+                            or Home Assistant host dies.</small>
+                        <small id="min_safe_fan_speed_warn" style="display: none; color: #f0ad4e; font-weight: bold;">
+                            Warning: values below 15% may not cool the server safely if the host dies.</small>
+                    </div>
                     <details class="form-group" style="grid-column: span 2; margin-top: 0.5em;">
                         <summary style="cursor: pointer; font-weight: bold;">Advanced Settings</summary>
                         <div class="form-grid" style="margin-top: 1em;">

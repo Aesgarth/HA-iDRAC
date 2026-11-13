@@ -62,9 +62,24 @@ echo "[RUN.SH]   MQTT_HOST: ${MQTT_HOST}:${MQTT_PORT}"
 # Avoid logging username/password directly unless debugging and you know it's safe
 # echo "[RUN.SH] MQTT_USERNAME: ${MQTT_USERNAME}"
 
-echo "[RUN.SH] Starting Python application (executing python3 -m app.main from /)..."
-cd / 
-exec python3 -m app.main
+echo "[RUN.SH] Starting watchdog and Python application..."
+cd /
+python3 /app/watchdog.py &
+WATCHDOG_PID=$!
 
-echo "[RUN.SH] !!!!! CRITICAL ERROR: python3 -m app.main failed to start or exited unexpectedly via exec !!!!!" >&2
-exit 1
+python3 -m app.main &
+MAIN_PID=$!
+
+cleanup() {
+    kill -TERM "$MAIN_PID" 2>/dev/null
+    wait "$MAIN_PID" 2>/dev/null
+    kill -TERM "$WATCHDOG_PID" 2>/dev/null
+    wait "$WATCHDOG_PID" 2>/dev/null
+}
+trap cleanup SIGTERM SIGINT
+
+wait "$MAIN_PID"
+EXIT_CODE=$?
+kill -TERM "$WATCHDOG_PID" 2>/dev/null
+wait "$WATCHDOG_PID" 2>/dev/null
+exit $EXIT_CODE

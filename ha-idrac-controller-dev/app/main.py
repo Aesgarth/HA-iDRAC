@@ -14,13 +14,36 @@ from .mqtt_client import MqttClient
 from .adaptive_pid import AdaptiveFanController
 from .disk_health import DiskHealthPoller, walk_physical_disks
 from . import web_server
+from . import watchdog
 from .webserver import WebServer
 
 # --- Global Variables ---
 running = True
 threads = []
+worker_instances = []
 status_lock = threading.Lock()
 pid_state_lock = threading.Lock()
+heartbeat_lock = threading.Lock()
+
+
+def update_watchdog_heartbeat(workers=None, now=None):
+    """Write the current list of manually-controlled servers to the watchdog heartbeat."""
+    active_workers = worker_instances if workers is None else workers
+    with heartbeat_lock:
+        servers = [
+            {
+                "id": getattr(w, "alias", str(id(w))),
+                "host": w.ipmi.ip,
+                "user": w.ipmi.user,
+                "password": w.ipmi.password,
+            }
+            for w in active_workers
+            if getattr(w, "in_manual_control", False)
+        ]
+        try:
+            watchdog.write_heartbeat(servers, path=watchdog.HEARTBEAT_FILE, now=now)
+        except OSError as e:
+            print(f"[WARNING] Could not write watchdog heartbeat: {e}", flush=True)
 ALL_SERVERS_STATUS = {}
 STATUS_FILE = "/data/current_status.json"
 PID_STATE_FILE = "/data/pid_states.json"
@@ -92,7 +115,8 @@ class ServerWorker:
         target_temp = pid_config.get('target_temp')
         if target_temp is None or target_temp == "":
             target_temp = self.config.get('target_temp', 50)
-        min_speed = pid_config.get('min_speed', 15)
+        self.min_safe_fan_speed = max(5, min(100, int(self.config.get('min_safe_fan_speed', 20))))
+        min_speed = max(int(pid_config.get('min_speed', 15)), self.min_safe_fan_speed)
         max_speed = pid_config.get('max_speed', 95)
         deadband = pid_config.get('deadband', 0.75)
         ti_seconds = pid_config.get('ti_seconds', 300.0)
@@ -119,6 +143,11 @@ class ServerWorker:
             critical_temp=critical_temp,
         )
         self.fan_state = SimpleFanState()
+        self.in_manual_control = False
+        self._consecutive_read_failures = 0
+        self._idrac_unreachable = False
+        self._needs_reconnect_handback = False
+        self._last_heartbeat_time = 0.0
 
         poll_int = self.config.get('poll_interval_seconds')
         if poll_int is not None and str(poll_int).strip() != "":
@@ -319,72 +348,11 @@ class ServerWorker:
                 self.mqtt.connect()
                 self._next_mqtt_attempt = time.time() + 15
 
-            raw_temp_data = self.ipmi.retrieve_temperatures_raw()
-            if raw_temp_data is None:
-                if self.mqtt.is_connected:
-                    self.mqtt.publish(self.mqtt.availability_topic, "offline", retain=True)
-                self._log("warning", "Could not read temperature SDR data; skipping cycle.")
-                self._sleep(60)
+            sleep_duration = self.step_once()
+            if sleep_duration is not None:
+                self._sleep(sleep_duration)
                 next_run = time.monotonic()
                 continue
-
-            if self.mqtt.is_connected:
-                self.mqtt.publish(self.mqtt.availability_topic, "online", retain=True)
-
-            temps = self.ipmi.parse_temperatures(raw_temp_data)
-            raw_fan_data = self.ipmi.retrieve_fan_rpms_raw()
-            fans = self.ipmi.parse_fan_rpms(raw_fan_data)
-            fan_readings = self.ipmi.parse_fan_readings(raw_fan_data)
-            self.evaluate_fan_health(fan_readings)
-            power_sdr_data = self.ipmi.retrieve_power_sdr_raw()
-            power = self.ipmi.parse_power_consumption(power_sdr_data)
-            psu_statuses = self.ipmi.get_power_status(power_sdr_data)
-
-            hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
-            target_fan_speed = self._apply_fan_policy(hottest_cpu, temps, power)
-
-            fan_mode = self.config.get('fan_mode', 'simple')
-            pid_status = (
-                f"Learning ({self.pid.samples} samples)"
-                if self.pid.samples < 5
-                else "Adapted"
-            ) if fan_mode == 'target' else None
-
-            status_data = {
-                "hottest_cpu_temp": hottest_cpu,
-                "inlet_temp": temps.get('inlet_temp'),
-                "exhaust_temp": temps.get('exhaust_temp'),
-                "power": power,
-                "target_fan_speed": None if isinstance(target_fan_speed, str) else target_fan_speed,
-                "cpus": temps.get('cpu_temps', []),
-                "fans": fans,
-                "psus": psu_statuses,
-                "pid_status": pid_status,
-                "fan_ok": self._fan_fault_status.get("ok", True),
-                "fan_status": self._fan_fault_description,
-                "fan_readings": fan_readings,
-            }
-            with status_lock:
-                ALL_SERVERS_STATUS[self.alias] = {
-                    "alias": self.alias,
-                    "ip": self.config['idrac_ip'],
-                    "last_updated": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
-                    "hottest_cpu_temp_c": hottest_cpu,
-                    "inlet_temp_c": temps.get('inlet_temp'),
-                    "exhaust_temp_c": temps.get('exhaust_temp'),
-                    "power_consumption_watts": power,
-                    "target_fan_speed_percent": target_fan_speed,
-                    "cpu_temps_c": temps.get('cpu_temps', []),
-                    "actual_fan_rpms": fans,
-                    "psu_statuses": psu_statuses,
-                    "pid_status": pid_status,
-                    "disks": getattr(self, 'current_disks', []),
-                    "disks_summary": getattr(self, 'current_disks_summary', None),
-                    "fan_fault": not self._fan_fault_status.get("ok", True),
-                    "fan_status": self._fan_fault_description,
-                }
-
-            self._publish_mqtt_data(status_data)
 
             cycle_duration = time.monotonic() - cycle_start
             self._log("debug", f"Cycle completed in {cycle_duration:.2f}s")
@@ -402,6 +370,123 @@ class ServerWorker:
                 next_run = now
             else:
                 self._sleep(next_run - now)
+
+    def _emit_heartbeat(self):
+        self._last_heartbeat_time = time.monotonic()
+        update_watchdog_heartbeat()
+
+    def _set_manual_control(self, manual):
+        changed = (self.in_manual_control != manual)
+        self.in_manual_control = manual
+        if changed:
+            self._emit_heartbeat()
+
+    def _publish_idrac_reachable(self, reachable):
+        if self.mqtt.is_connected:
+            self.mqtt.publish_state(
+                "binary_sensor",
+                "idrac_reachable",
+                "ON" if reachable else "OFF",
+                retain=True,
+            )
+
+    def step_once(self):
+        """Execute a single poll cycle. Returns the recommended sleep duration in seconds."""
+        raw_temp_data = self.ipmi.retrieve_temperatures_raw()
+        if raw_temp_data is None:
+            self._consecutive_read_failures += 1
+            if self._consecutive_read_failures >= 3:
+                if not self._idrac_unreachable:
+                    self._log(
+                        "warning",
+                        "iDRAC unreachable after 3 consecutive failed temperature reads; "
+                        "attempting hand-back to Dell auto every 60 s.",
+                    )
+                    self._idrac_unreachable = True
+                    self._needs_reconnect_handback = True
+                if self.ipmi.apply_dell_fan_control_profile() is not None:
+                    self._set_manual_control(False)
+                self._publish_idrac_reachable(False)
+            else:
+                self._log("warning", "Could not read temperature SDR data; skipping cycle.")
+
+            if self.mqtt.is_connected:
+                self.mqtt.publish(self.mqtt.availability_topic, "online", retain=True)
+            self._emit_heartbeat()
+            return 60
+
+        self._consecutive_read_failures = 0
+        if self._needs_reconnect_handback:
+            self._log("info", "iDRAC reconnected; handing fans back to Dell auto and resetting slew state.")
+            self.ipmi.apply_dell_fan_control_profile(force=True)
+            self._set_manual_control(False)
+            self.pid.speed = float(self.pid.min_speed)
+            self.pid.last_time = None
+            self.fan_state.in_auto = False
+            self.fan_state.bucket = None
+            self._needs_reconnect_handback = False
+        self._idrac_unreachable = False
+
+        if self.mqtt.is_connected:
+            self.mqtt.publish(self.mqtt.availability_topic, "online", retain=True)
+            self._publish_idrac_reachable(True)
+
+        temps = self.ipmi.parse_temperatures(raw_temp_data)
+        raw_fan_data = self.ipmi.retrieve_fan_rpms_raw()
+        fans = self.ipmi.parse_fan_rpms(raw_fan_data)
+        fan_readings = self.ipmi.parse_fan_readings(raw_fan_data)
+        self.evaluate_fan_health(fan_readings)
+        power_sdr_data = self.ipmi.retrieve_power_sdr_raw()
+        power = self.ipmi.parse_power_consumption(power_sdr_data)
+        psu_statuses = self.ipmi.get_power_status(power_sdr_data)
+
+        hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
+        target_fan_speed = self._apply_fan_policy(hottest_cpu, temps, power)
+        self._emit_heartbeat()
+
+        fan_mode = self.config.get('fan_mode', 'simple')
+        pid_status = (
+            f"Learning ({self.pid.samples} samples)"
+            if self.pid.samples < 5
+            else "Adapted"
+        ) if fan_mode == 'target' else None
+
+        status_data = {
+            "hottest_cpu_temp": hottest_cpu,
+            "inlet_temp": temps.get('inlet_temp'),
+            "exhaust_temp": temps.get('exhaust_temp'),
+            "power": power,
+            "target_fan_speed": None if isinstance(target_fan_speed, str) else target_fan_speed,
+            "cpus": temps.get('cpu_temps', []),
+            "fans": fans,
+            "psus": psu_statuses,
+            "pid_status": pid_status,
+            "fan_ok": self._fan_fault_status.get("ok", True),
+            "fan_status": self._fan_fault_description,
+            "fan_readings": fan_readings,
+        }
+        with status_lock:
+            ALL_SERVERS_STATUS[self.alias] = {
+                "alias": self.alias,
+                "ip": self.config['idrac_ip'],
+                "last_updated": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "hottest_cpu_temp_c": hottest_cpu,
+                "inlet_temp_c": temps.get('inlet_temp'),
+                "exhaust_temp_c": temps.get('exhaust_temp'),
+                "power_consumption_watts": power,
+                "target_fan_speed_percent": target_fan_speed,
+                "cpu_temps_c": temps.get('cpu_temps', []),
+                "actual_fan_rpms": fans,
+                "psu_statuses": psu_statuses,
+                "pid_status": pid_status,
+                "disks": getattr(self, 'current_disks', []),
+                "disks_summary": getattr(self, 'current_disks_summary', None),
+                "fan_fault": not self._fan_fault_status.get("ok", True),
+                "fan_status": self._fan_fault_description,
+            }
+
+        self._publish_mqtt_data(status_data)
+        return None
 
     def evaluate_fan_health(self, readings, now=None):
         """Update FanMonitor with {fan_name: rpm_or_None} and track fault state."""
@@ -441,6 +526,7 @@ class ServerWorker:
                 if not self._fan_fault_dell_auto_latched:
                     self._fan_fault_dell_auto_latched = True
                     self.ipmi.apply_dell_fan_control_profile(force=True)
+                    self._set_manual_control(False)
                 return "Dell Auto (fan fault)"
             if self._fan_fault_dell_auto_latched:
                 if (self._fan_fault_last_fault_time is not None
@@ -452,11 +538,13 @@ class ServerWorker:
         if hottest_cpu is None:
             self._log("warning", "No CPU temperature sensor found; handing fans back to the iDRAC for safety.")
             self.ipmi.apply_dell_fan_control_profile()
+            self._set_manual_control(False)
             return "Dell Auto (no CPU sensor)"
 
         crit_thresh = self.fan_cfg["critical"]
         if self.fan_state.should_use_auto(hottest_cpu, crit_thresh):
             self.ipmi.apply_dell_fan_control_profile()
+            self._set_manual_control(False)
             return "Dell Auto"
 
         fan_mode = self.config.get('fan_mode', 'simple')
@@ -517,8 +605,11 @@ class ServerWorker:
                 target_fan_speed = 80
 
         if isinstance(target_fan_speed, (int, float)):
+            target_fan_speed = max(int(target_fan_speed), self.min_safe_fan_speed)
             if self.ipmi.apply_user_fan_control_profile(target_fan_speed) is None:
+                self._set_manual_control(False)
                 return "Dell Auto (fan command failed)"
+            self._set_manual_control(True)
             if fan_mode == 'target':
                 self._last_target_fan_speed = target_fan_speed
         return target_fan_speed
@@ -545,6 +636,8 @@ class ServerWorker:
         while time.time() < deadline and self.running and running:
             self._check_disk_health_freshness()
             self._check_fan_republish()
+            if time.monotonic() - self._last_heartbeat_time >= 60.0:
+                self._emit_heartbeat()
             time.sleep(0.2)
 
     def _publish_fan_health_mqtt(self, status):
@@ -573,6 +666,7 @@ class ServerWorker:
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
             "fan_fault": {"component": "binary_sensor", "name": "Fan fault", "device_class": "problem"},
             "fan_status": {"component": "sensor", "name": "Fan status", "icon": "mdi:fan-alert"},
+            "idrac_reachable": {"component": "binary_sensor", "name": "iDRAC reachable", "device_class": "connectivity"},
         }
         for i, _ in enumerate(status.get('cpus', [])):
             sensors[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C", "state_class": "measurement"}
@@ -596,6 +690,8 @@ class ServerWorker:
 
             if slug in ("fan_fault", "fan_status"):
                 continue
+            elif slug == "idrac_reachable":
+                self.mqtt.publish_state('binary_sensor', 'idrac_reachable', 'ON', retain=True)
             elif desc['component'] == 'sensor':
                 value = None
                 if slug.startswith('fan_'):
@@ -625,6 +721,7 @@ class ServerWorker:
         if self.config.get('fan_control_enabled', True):
             self._log("info", "Worker shutting down. Reverting to Dell auto fans.")
             self.ipmi.apply_dell_fan_control_profile()
+            self._set_manual_control(False)
         else:
             self._log("info", "Worker shutting down with fan control disabled; leaving iDRAC fan settings untouched.")
 
@@ -689,7 +786,7 @@ if __name__ == "__main__":
     web = WebServer(web_server.app, host="0.0.0.0", port=web_server_port)
     web.start()
 
-    worker_instances = []
+    worker_instances.clear()
     for server_conf in servers_configs_list:
         if server_conf.get("enabled", False):
             worker = ServerWorker(server_conf, global_options)
@@ -697,6 +794,7 @@ if __name__ == "__main__":
             thread = threading.Thread(target=worker.run, daemon=True)
             threads.append(thread)
             thread.start()
+    update_watchdog_heartbeat()
 
     # Supervisor watchdog endpoint: 503 only if every configured worker has
     # died, not when the iDRAC/MQTT is merely unreachable (the worker stays

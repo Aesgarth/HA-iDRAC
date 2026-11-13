@@ -56,6 +56,19 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label for="min_safe_fan_speed">Minimum safe fan speed (%)</label>
+                        {% set safe_speed = server.min_safe_fan_speed if server.min_safe_fan_speed is not none else 20
+                        %}
+                        <input type="number" id="min_safe_fan_speed" name="min_safe_fan_speed" value="{{ safe_speed }}"
+                            min="5" max="100"
+                            oninput="document.getElementById('min_safe_fan_speed_warn').style.display = (this.value !== '' && Number(this.value) < 15) ? 'block' : 'none';">
+                        <small>Because Dell manual mode has no timeout, fans stay at or above this speed if the add-on
+                            or Home Assistant host dies.</small>
+                        <small id="min_safe_fan_speed_warn"
+                            style="display: {{ 'block' if safe_speed < 15 else 'none' }}; color: #f0ad4e; font-weight: bold;">
+                            Warning: values below 15% may not cool the server safely if the host dies.</small>
+                    </div>
+                    <div class="form-group">
                         <label for="poll_interval_seconds">Poll Interval (seconds)</label>
                         <input type="number" id="poll_interval_seconds" name="poll_interval_seconds"
                             value="{{ server.poll_interval_seconds if server.poll_interval_seconds is not none and server.poll_interval_seconds != '' else '' }}"
@@ -324,7 +337,7 @@
         }
 
         // Run on page load to set the initial correct view
-        document.addEventListener('DOMContentLoaded', updateFanMode);
+        document.addEventListener('DOMContentLoaded', updanMode);
     </script>
 
     <style>

@@ -209,7 +209,7 @@ def test_poller_success_publishes_mqtt():
     poller._handle_success(disks)
 
     slugs = [d[1] for d in mqtt.discoveries]
-    assert "disks_summary" in slugs
+    assert "disks_summary" not in slugs
     assert "disks_problem" in slugs
     assert "disk_monitoring_failing" in slugs
     assert "disks_last_checked" in slugs
@@ -217,19 +217,16 @@ def test_poller_success_publishes_mqtt():
     assert "disk_2_health" in slugs
 
     state_slugs = [s[1] for s in mqtt.states]
-    assert "disks_summary" in state_slugs
+    assert "disks_summary" not in state_slugs
     assert "disks_problem" in state_slugs
     assert "disk_1_health" in state_slugs
     assert "disk_2_health" in state_slugs
     assert "disk_monitoring_failing" in state_slugs
     assert "disks_last_checked" in state_slugs
 
-    summary_entry = next(s for s in mqtt.states if s[1] == "disks_summary")
-    assert summary_entry[2] == "All 2 disks OK"
-    assert summary_entry[4] is True
-
     prob_entry = next(s for s in mqtt.states if s[1] == "disks_problem")
     assert prob_entry[2] == "OFF"
+    assert prob_entry[3]["summary"] == "All 2 disks OK"
     assert prob_entry[4] is True
 
     fail_entry = next(s for s in mqtt.states if s[1] == "disk_monitoring_failing")
@@ -277,13 +274,13 @@ def test_poller_failures_and_recovery():
     assert poller.consecutive_failures == 3
     assert poller.is_stale is True
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("offline", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("offline", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("offline", True)
 
     poller._handle_success(disks)
     assert poller.consecutive_failures == 0
     assert any(lvl == "info" and "recovered" in msg for lvl, msg in logs)
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("online", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("online", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("online", True)
 
 
 def test_poller_stop_terminates_promptly():
@@ -392,9 +389,9 @@ def test_discovery_and_state_publishing_contract():
     disks = dh.parse_walk(make_walk(disks_of(2)))
     poller._handle_success(disks)
 
-    # 6 entities discovered: 2 disks + 1 summary + 1 problem + 1 failing + 1 last checked
-    assert len(mqtt.discoveries) == 6
-    assert "disks_summary" in mqtt.discoveries
+    # 5 entities discovered: 2 disks + 1 problem + 1 failing + 1 last checked
+    assert len(mqtt.discoveries) == 5
+    assert "disks_summary" not in mqtt.discoveries
     assert "disks_problem" in mqtt.discoveries
     assert "disk_monitoring_failing" in mqtt.discoveries
     assert "disks_last_checked" in mqtt.discoveries
@@ -427,7 +424,7 @@ def test_discovery_and_state_publishing_contract():
         _, retain = mqtt.published[disc_payload["state_topic"]]
         assert retain is True
 
-    debug_logs = [msg for lvl, msg in logs if lvl == "debug" and "Republished 6 disk states" in msg]
+    debug_logs = [msg for lvl, msg in logs if lvl == "debug" and "Republished 5 disk states" in msg]
     assert len(debug_logs) >= 1
 
 
@@ -502,7 +499,7 @@ def test_staleness_healthy_then_three_failures_marks_unavailable_and_failing_sen
 
     # Check healthy state
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("online", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("online", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("online", True)
     assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disk_monitoring_failing"] == ("OFF", True)
     assert poller.is_stale is False
 
@@ -517,7 +514,7 @@ def test_staleness_healthy_then_three_failures_marks_unavailable_and_failing_sen
     # Sensors must be marked unavailable (offline)
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("offline", True)
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_2_health/availability"] == ("offline", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("offline", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("offline", True)
 
     # Diagnostic sensor: disk_monitoring_failing must be ON
     assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disk_monitoring_failing"] == ("ON", True)
@@ -557,7 +554,7 @@ def test_staleness_hung_or_dead_poller_thread_restarts_and_marks_stale():
 
     # Sensors marked unavailable
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("offline", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("offline", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("offline", True)
     assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disk_monitoring_failing"] == ("ON", True)
 
 
@@ -587,13 +584,15 @@ def test_staleness_known_problem_then_failures_keeps_problem_on_with_stale_flag(
 
     # 1. Availability remains online (never silently unavailable)
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_2_health/availability"] == ("online", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("online", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("online", True)
 
-    # 2. Problem sensor is STILL ON, never turned to OFF or Unknown
+    # 2. Problem sensor is STILL ON with summary, problems, and stale=True
     assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem"] == ("ON", True)
     prob_attrs, _ = mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/attributes"]
-    assert json.loads(prob_attrs)["stale"] is True
-    assert json.loads(prob_attrs)["last_success"] is not None
+    prob_data = json.loads(prob_attrs)
+    assert prob_data["stale"] is True
+    assert prob_data["last_success"] is not None
+    assert prob_data["summary"] == "1 problem(s)"
 
     # 3. Disk 2 still reports Predicted failure with stale=True
     raw_disk2, _ = mqtt.published[f"{mqtt.base_topic}/sensor/disk_2_health"]
@@ -601,12 +600,6 @@ def test_staleness_known_problem_then_failures_keeps_problem_on_with_stale_flag(
     assert d2["state"] == "Predicted failure"
     assert d2["stale"] is True
     assert d2["last_success"] is not None
-
-    # 4. Summary still reports 1 problem with stale=True
-    raw_sum, _ = mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary"]
-    sum_data = json.loads(raw_sum)
-    assert sum_data["state"] == "1 problem(s)"
-    assert sum_data["stale"] is True
 
 
 def test_staleness_recovery_restores_everything():
@@ -647,7 +640,7 @@ def test_staleness_recovery_restores_everything():
     # Availability restored to online
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("online", True)
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_2_health/availability"] == ("online", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("online", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("online", True)
 
     # Fresh states published immediately
     raw_d1, _ = mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health"]
@@ -690,13 +683,12 @@ def test_staleness_republish_loop_never_publishes_stale_cached_ok():
         if topic.endswith("/sensor/disk_1_health") or topic.endswith("/sensor/disk_2_health"):
             data = json.loads(payload)
             assert data.get("state") != "OK", f"Topic {topic} must not publish cached 'OK' when stale"
-        if topic.endswith("/sensor/disks_summary"):
-            data = json.loads(payload)
-            assert "OK" not in data.get("state", ""), "disks_summary must not publish 'OK' when stale"
+        if topic.endswith("/binary_sensor/disks_problem"):
+            assert payload != "OFF", "disks_problem must not publish cached 'OFF' when stale"
 
     # Availability must be offline
     assert mqtt.published[f"{mqtt.base_topic}/sensor/disk_1_health/availability"] == ("offline", True)
-    assert mqtt.published[f"{mqtt.base_topic}/sensor/disks_summary/availability"] == ("offline", True)
+    assert mqtt.published[f"{mqtt.base_topic}/binary_sensor/disks_problem/availability"] == ("offline", True)
 
 
 

@@ -219,6 +219,15 @@ class ServerWorker:
             self._log("info", "Shutdown command received via MQTT.")
             self.ipmi.chassis_shutdown()
 
+    def _cleanup_deprecated_mqtt_entities(self):
+        if not self.mqtt.is_connected:
+            return
+        for slug in ("fan_status", "disks_summary"):
+            self.mqtt.remove_discovery("sensor", slug)
+            self.mqtt.publish(f"{self.mqtt.base_topic}/sensor/{slug}", "", retain=True)
+            self.mqtt.publish(f"{self.mqtt.base_topic}/sensor/{slug}/attributes", "", retain=True)
+            self.mqtt.publish(f"{self.mqtt.base_topic}/sensor/{slug}/availability", "", retain=True)
+
     def _on_mqtt_connected(self):
         """Called on every (re)connect: subscriptions and discovery are lost
         when the broker restarts, so restore them instead of staying silent
@@ -226,6 +235,7 @@ class ServerWorker:
         self._log("info", "MQTT connected; subscribing to command topic and re-publishing discovery.")
         self.mqtt.subscribe(f"{self.mqtt.base_topic}/command/shutdown")
         self.discovered_sensors.clear()
+        self._cleanup_deprecated_mqtt_entities()
         if self.disk_poller:
             self.disk_poller.republish_mqtt()
 
@@ -652,12 +662,17 @@ class ServerWorker:
         if not self.mqtt.is_connected:
             return
         fan_state = "ON" if not status.get("fan_ok", True) else "OFF"
-        self.mqtt.publish_state("binary_sensor", "fan_fault", fan_state, retain=True)
         attrs = {
-            (f"{k}_rpm" if k.lower() == "state" else k): v
-            for k, v in status.get("fan_readings", {}).items()
+            "status": status.get("fan_status", "OK"),
+            "faulty_fans": status.get(
+                "faulty_fans",
+                list(self._fan_fault_status.get("faulty", {}).keys()),
+            ),
         }
-        self.mqtt.publish_state("sensor", "fan_status", status.get("fan_status", "OK"), attrs, retain=True)
+        for k, v in status.get("fan_readings", {}).items():
+            key = f"{k}_rpm" if k.lower() in ("state", "status", "faulty_fans") else k
+            attrs[key] = v
+        self.mqtt.publish_state("binary_sensor", "fan_fault", fan_state, attrs, retain=True)
 
     def _publish_mqtt_data(self, status):
         if not self.mqtt.is_connected:
@@ -673,7 +688,6 @@ class ServerWorker:
             "power": {"component": "sensor", "device_class": "power", "unit": "W", "state_class": "measurement", "icon": "mdi:flash"},
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
             "fan_fault": {"component": "binary_sensor", "name": "Fan fault", "device_class": "problem"},
-            "fan_status": {"component": "sensor", "name": "Fan status", "icon": "mdi:fan-alert"},
             "idrac_reachable": {"component": "binary_sensor", "name": "iDRAC reachable", "device_class": "connectivity"},
         }
         for i, _ in enumerate(status.get('cpus', [])):
@@ -694,10 +708,10 @@ class ServerWorker:
                 )
                 self.discovered_sensors.add(slug)
                 self.discovered_components[slug] = desc['component']
-                if slug in ("fan_fault", "fan_status"):
+                if slug == "fan_fault":
                     newly_discovered_fan = True
 
-            if slug in ("fan_fault", "fan_status"):
+            if slug == "fan_fault":
                 continue
             elif slug == "idrac_reachable":
                 self.mqtt.publish_state('binary_sensor', 'idrac_reachable', 'ON', retain=True)

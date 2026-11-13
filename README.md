@@ -55,10 +55,11 @@ control and hardware monitoring.
    - Single server, configured from the add-on Configuration tab.
    - Simple 3-tier fan control with hysteresis, monitoring, MQTT discovery.
 
-2. **HA iDRAC Controller BETA** (`ha_idrac_controller_development`, version 0.1.0-dev.15)
-   - Multi-server, per-server fan modes (simple / curve / target temperature),
-     monitor-only mode, PSU + connectivity sensors, graceful shutdown button.
-   - Recommended for T430/iDRAC 8 because it is the actively developed one.
+2. **HA iDRAC Controller BETA** (`ha_idrac_controller_development`)
+   - Multi-server, per-server fan modes (simple / curve / self-learning target temperature),
+     fan failure detection, SNMP disk health monitoring, in-container safety watchdog,
+     live UI settings without restarting, and graceful shutdown button.
+   - See [ha-idrac-controller-dev/README.md](ha-idrac-controller-dev/README.md) for full documentation of all new features, entities, and settings.
 
 > Both add-ons use the standard 12G/13G Dell fan-control sequence:
 > `raw 0x30 0x30 0x01 0x00` (manual) and `raw 0x30 0x30 0x02 0xff <pct>`.

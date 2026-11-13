@@ -304,14 +304,10 @@ class DiskHealthPoller:
             return
 
         if not self.discovered_summary:
-            summary_avail = f"{self.mqtt.base_topic}/sensor/disks_summary/availability"
-            self.mqtt.publish_discovery(
-                "sensor", "disks_summary", "Disks summary",
-                icon="mdi:harddisk", extra_avail_topic=summary_avail
-            )
+            prob_avail = f"{self.mqtt.base_topic}/binary_sensor/disks_problem/availability"
             self.mqtt.publish_discovery(
                 "binary_sensor", "disks_problem", "Disks problem",
-                device_class="problem"
+                device_class="problem", extra_avail_topic=prob_avail
             )
             self.mqtt.publish_discovery(
                 "binary_sensor", "disk_monitoring_failing", "Disk monitoring failing",
@@ -352,8 +348,8 @@ class DiskHealthPoller:
         if not self.mqtt or not getattr(self.mqtt, "is_connected", False):
             return
         payload = "online" if online else "offline"
-        summary_avail_topic = f"{self.mqtt.base_topic}/sensor/disks_summary/availability"
-        self.mqtt.publish(summary_avail_topic, payload, retain=True)
+        prob_avail_topic = f"{self.mqtt.base_topic}/binary_sensor/disks_problem/availability"
+        self.mqtt.publish(prob_avail_topic, payload, retain=True)
 
         for index in self.discovered_disks:
             disk_avail_topic = f"{self.mqtt.base_topic}/sensor/disk_{index}_health/availability"
@@ -392,35 +388,29 @@ class DiskHealthPoller:
             if self.last_success is not None else None
         )
 
-        # 1. Summary sensor
-        summary_state = (
+        # 1. Binary problem sensor (carries summary + per-disk problem details in attributes)
+        summary_text = (
             f"All {summary['count']} disks OK"
             if summary['problem_count'] == 0
             else f"{summary['problem_count']} problem(s)"
         )
-        summary_attrs = {
+        prob_attrs = {
+            "summary": summary_text,
             "count": summary["count"],
             "problem_count": summary["problem_count"],
             "problems": summary["problems"],
         }
-        if stale:
-            summary_attrs["stale"] = True
-            summary_attrs["last_success"] = iso_last_success
-        self.mqtt.publish_state("sensor", "disks_summary", summary_state, summary_attrs, retain=True)
-
-        # 2. Binary sensor
-        prob_attrs = {}
         if stale:
             prob_attrs["stale"] = True
             prob_attrs["last_success"] = iso_last_success
         self.mqtt.publish_state(
             "binary_sensor", "disks_problem",
             "ON" if summary["has_problem"] else "OFF",
-            attributes=prob_attrs if prob_attrs else None,
+            attributes=prob_attrs,
             retain=True
         )
 
-        # 3. Per disk sensor
+        # 2. Per disk sensor
         for index, disk in disks.items():
             slug = f"disk_{index}_health"
             attrs = {
@@ -475,7 +465,7 @@ class DiskHealthPoller:
 
         self._publish_diagnostics()
         if not (self.is_stale and not self.had_problem) and self.last_disks:
-            total = len(self.last_disks) + 4
+            total = len(self.last_disks) + 3
             self._log("debug", f"Republished {total} disk states to MQTT ({reason})")
 
     def republish_cached_states(self, reason="cached"):

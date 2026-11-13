@@ -1,3 +1,12 @@
+## 0.1.0-dev.31 - 2026-11-13
+
+* Rename changelog to CHANGELOG.md so Home Assistant shows it
+
+## 0.1.0-dev.30 - 2026-11-13
+
+* Remove duplicate Fan status / Disks summary sensors (merged into Fan fault / Disks problem attributes). Existing installs: the old entities are removed automatically; update any automations that used them.
+* Update documentation (`README.md`) to reflect all current features, entities, safety limits, and live settings.
+
 ## 0.1.0-dev.29 - 2026-11-13
 
 * Apply UI settings live

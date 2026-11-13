@@ -1,3 +1,7 @@
+## 0.1.0-dev.29 - 2026-11-13
+
+* Apply UI settings live
+
 ## 0.1.0-dev.28 - 2026-11-13
 
 * Watchdog process, unreachable-iDRAC hand-back

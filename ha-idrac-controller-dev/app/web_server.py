@@ -5,6 +5,7 @@ import os
 import json
 import re
 import subprocess
+import tempfile
 import threading
 
 try:
@@ -33,6 +34,7 @@ status_lock = None
 config_lock = threading.Lock()
 global_config = {}
 health_check = None
+server_manager = None
 
 
 # --- Helper functions ---
@@ -161,11 +163,18 @@ def load_servers_config():
 def save_servers_config(servers):
     with config_lock:
         try:
-            with open(SERVERS_CONFIG_FILE, 'w') as f:
-                json.dump(servers, f, indent=4)
-            restart_url = "/hassio/dashboard"
-            message = Markup(f"Configuration saved! <a href='{restart_url}' target='_top'>Click here to go to the Add-ons dashboard to RESTART</a> for changes to take effect.")
-            flash(message, "success")
+            parent = os.path.dirname(SERVERS_CONFIG_FILE) or "."
+            os.makedirs(parent, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".servers_config_", suffix=".tmp")
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(servers, f, indent=4)
+                os.replace(tmp_path, SERVERS_CONFIG_FILE)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+            flash("Saved and applied.", "success")
             return True
         except IOError:
             flash("Error: Could not write to config file.", "error")
@@ -248,6 +257,21 @@ def add_server():
         "pid_config": parse_and_validate_pid_config(request.form),
         "fan_curve": [],
     }
+    if (request.form.get('fan_mode') or "simple") == "target":
+        raw_min = request.form.get('min_speed')
+        raw_max = request.form.get('max_speed')
+        if raw_min not in (None, "") and raw_max not in (None, "") and _to_int(raw_min, 15) > _to_int(raw_max, 95):
+            flash("PID minimum fan speed cannot exceed maximum fan speed.", "error")
+            return redirect('../servers')
+
+    if server_manager is not None:
+        try:
+            server_manager.add_server(new_server)
+            flash("Saved and applied.", "success")
+        except ValueError as e:
+            flash(str(e), "error")
+        return redirect('../servers')
+
     servers.append(new_server)
     save_servers_config(servers)
     return redirect('../servers')
@@ -295,6 +319,7 @@ def update_server(alias):
         flash(f"Server '{alias}' not found.", "error")
         return redirect('../../servers')
 
+    server_to_update = dict(server_to_update)
     server_to_update['idrac_ip'] = (request.form.get('idrac_ip') or "").strip()
     server_to_update['idrac_username'] = request.form.get('idrac_username') or "root"
     new_password = request.form.get('idrac_password')
@@ -339,12 +364,34 @@ def update_server(alias):
             break
     server_to_update['fan_curve'] = sorted(fan_curve, key=lambda p: p['temp'])
 
+    if server_to_update['fan_mode'] == "target":
+        raw_min = request.form.get('min_speed')
+        raw_max = request.form.get('max_speed')
+        if raw_min not in (None, "") and raw_max not in (None, "") and _to_int(raw_min, 15) > _to_int(raw_max, 95):
+            flash("PID minimum fan speed cannot exceed maximum fan speed.", "error")
+            return redirect('../../servers')
+
+    if server_manager is not None:
+        try:
+            server_manager.apply_settings(alias, server_to_update)
+            flash("Saved and applied.", "success")
+        except ValueError as e:
+            flash(str(e), "error")
+        return redirect('../../servers')
+
+    idx = next(i for i, s in enumerate(servers) if s['alias'] == alias)
+    servers[idx] = server_to_update
     save_servers_config(servers)
     return redirect('../../servers')
 
 
 @app.route('/servers/delete/<alias>', methods=['POST'])
 def delete_server(alias):
+    if server_manager is not None:
+        server_manager.remove_server(alias)
+        flash("Saved and applied.", "success")
+        return redirect('../../servers')
+
     servers = load_servers_config()
     servers_to_keep = [s for s in servers if s['alias'] != alias]
     if len(servers_to_keep) < len(servers):

@@ -1,9 +1,11 @@
 # HA-iDRAC/ha-idrac-controller-dev/app/main.py
+import copy
 import json
 import logging
 import os
 import re
 import signal
+import tempfile
 import threading
 import time
 
@@ -143,6 +145,7 @@ class ServerWorker:
             critical_temp=critical_temp,
         )
         self.fan_state = SimpleFanState()
+        self._cycle_lock = threading.Lock()
         self.in_manual_control = False
         self._consecutive_read_failures = 0
         self._idrac_unreachable = False
@@ -161,6 +164,7 @@ class ServerWorker:
 
         self.server_info = {}
         self.discovered_sensors = set()
+        self.discovered_components = {}
         self._next_mqtt_attempt = 0.0
         self._pcie_response_disabled = False
         self.alive = True
@@ -392,6 +396,10 @@ class ServerWorker:
 
     def step_once(self):
         """Execute a single poll cycle. Returns the recommended sleep duration in seconds."""
+        with self._cycle_lock:
+            return self._step_once_locked()
+
+    def _step_once_locked(self):
         raw_temp_data = self.ipmi.retrieve_temperatures_raw()
         if raw_temp_data is None:
             self._consecutive_read_failures += 1
@@ -685,6 +693,7 @@ class ServerWorker:
                     cmd_topic, None, desc.get('state_class'),
                 )
                 self.discovered_sensors.add(slug)
+                self.discovered_components[slug] = desc['component']
                 if slug in ("fan_fault", "fan_status"):
                     newly_discovered_fan = True
 
@@ -742,6 +751,318 @@ class ServerWorker:
             self.disk_poller.stop()
 
 
+class ServerManager:
+    """Manages server configs, worker threads, and live settings updates."""
+
+    def __init__(self, global_opts, config_file="/data/servers_config.json",
+                 config_lock=None, workers=None, threads_list=None):
+        self.global_opts = global_opts
+        self.config_file = config_file
+        self._config_lock = config_lock or threading.Lock()
+        self._manager_lock = threading.Lock()
+        self.workers = workers if workers is not None else []
+        self.threads = threads_list if threads_list is not None else []
+        self._worker_threads = {}
+
+    def _load_configs(self):
+        with self._config_lock:
+            if not os.path.exists(self.config_file):
+                return []
+            with open(self.config_file, "r") as f:
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError:
+                    return []
+
+    def _save_configs(self, servers):
+        with self._config_lock:
+            parent = os.path.dirname(self.config_file) or "."
+            os.makedirs(parent, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".servers_config_", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(servers, f, indent=4)
+                os.replace(tmp_path, self.config_file)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+
+    @staticmethod
+    def validate_settings(settings):
+        alias = (settings.get("alias") or "").strip()
+        if not alias:
+            raise ValueError("Server alias is required.")
+        ip = (settings.get("idrac_ip") or "").strip()
+        if not ip:
+            raise ValueError("iDRAC IP / Hostname is required.")
+
+        safe_speed = settings.get("min_safe_fan_speed", 20)
+        try:
+            safe_val = int(safe_speed)
+        except (TypeError, ValueError):
+            raise ValueError("Minimum safe fan speed must be a whole number.")
+        if safe_val < 5 or safe_val > 100:
+            raise ValueError("Minimum safe fan speed must be between 5% and 100%.")
+
+        poll_int = settings.get("poll_interval_seconds")
+        if poll_int is not None and str(poll_int).strip() != "":
+            try:
+                if float(poll_int) < 5:
+                    raise ValueError("Poll interval must be at least 5 seconds.")
+            except (TypeError, ValueError) as exc:
+                if "at least 5" in str(exc):
+                    raise
+                raise ValueError("Poll interval must be a number.")
+
+        fan_mode = settings.get("fan_mode", "simple")
+        if fan_mode == "simple":
+            base = int(settings.get("base_fan_speed_percent", 20))
+            high = int(settings.get("high_temp_fan_speed_percent", 50))
+            low = int(settings.get("low_temp_threshold", 45))
+            crit = int(settings.get("critical_temp_threshold", 65))
+            if not (5 <= base <= 100) or not (5 <= high <= 100):
+                raise ValueError("Fan speeds must be between 5% and 100%.")
+            if base > high:
+                raise ValueError("Base fan speed cannot exceed high-temp fan speed.")
+            if low >= crit:
+                raise ValueError("Low temperature threshold must be below critical temperature threshold.")
+        elif fan_mode == "target":
+            pid = settings.get("pid_config") or {}
+            min_s = pid.get("min_speed", 15)
+            max_s = pid.get("max_speed", 95)
+            target = pid.get("target_temp", 50)
+            ramp_down = pid.get("ramp_down_percent_per_min", 4)
+            if min_s is not None and min_s != "" and max_s is not None and max_s != "":
+                if int(min_s) > int(max_s):
+                    raise ValueError("PID minimum fan speed cannot exceed maximum fan speed.")
+                if not (5 <= int(min_s) <= 100) or not (5 <= int(max_s) <= 100):
+                    raise ValueError("PID fan speeds must be between 5% and 100%.")
+            if target is not None and target != "" and not (20 <= int(target) <= 90):
+                raise ValueError("Target temperature must be between 20°C and 90°C.")
+            if ramp_down is not None and ramp_down != "" and not (1 <= float(ramp_down) <= 50):
+                raise ValueError("Ramp-down rate must be between 1 and 50 %/min.")
+        elif fan_mode == "curve":
+            for pt in settings.get("fan_curve", []):
+                spd = int(pt.get("speed", 0))
+                if not (5 <= spd <= 100):
+                    raise ValueError("Fan curve speeds must be between 5% and 100%.")
+
+    def get_worker(self, server_id):
+        return next((w for w in self.workers if w.alias == server_id), None)
+
+    def start_all(self, configs):
+        with self._manager_lock:
+            for conf in configs:
+                if conf.get("enabled", False):
+                    self._start_worker_locked(copy.deepcopy(conf))
+            update_watchdog_heartbeat(self.workers)
+
+    def _start_worker_locked(self, server_conf, pid_state=None):
+        worker = ServerWorker(server_conf, self.global_opts)
+        if pid_state:
+            worker.pid.load_state(pid_state)
+        self.workers.append(worker)
+        thread = threading.Thread(target=worker.run, daemon=True)
+        self.threads.append(thread)
+        self._worker_threads[worker.alias] = thread
+        thread.start()
+        return worker
+
+    def _stop_worker_locked(self, server_id, remove_discovery=False, timeout=10.0):
+        worker = self.get_worker(server_id)
+        if not worker:
+            return None
+        pid_state = worker.pid.get_state()
+        thread = self._worker_threads.pop(server_id, None)
+        worker.stop()
+        if thread and thread.is_alive():
+            thread.join(timeout=timeout)
+        # Ensure Dell auto hand-back even if worker was never started in a thread
+        if worker.config.get("fan_control_enabled", True):
+            worker.ipmi.apply_dell_fan_control_profile()
+        worker._set_manual_control(False)
+        if remove_discovery and worker.mqtt.is_connected:
+            for slug in list(worker.discovered_sensors):
+                comp = worker.discovered_components.get(slug, "sensor")
+                worker.mqtt.remove_discovery(comp, slug)
+            worker.mqtt.disconnect()
+        if worker in self.workers:
+            self.workers.remove(worker)
+        if thread in self.threads:
+            self.threads.remove(thread)
+        update_watchdog_heartbeat(self.workers)
+        return pid_state
+
+    def add_server(self, settings):
+        self.validate_settings(settings)
+        with self._manager_lock:
+            configs = self._load_configs()
+            if any(s["alias"] == settings["alias"] for s in configs):
+                raise ValueError(f"Server alias '{settings['alias']}' already exists.")
+            saved = copy.deepcopy(settings)
+            configs.append(saved)
+            self._save_configs(configs)
+            if saved.get("enabled", True):
+                self._start_worker_locked(copy.deepcopy(saved))
+                update_watchdog_heartbeat(self.workers)
+
+    def remove_server(self, server_id):
+        with self._manager_lock:
+            self._stop_worker_locked(server_id, remove_discovery=True)
+            configs = self._load_configs()
+            configs = [s for s in configs if s["alias"] != server_id]
+            self._save_configs(configs)
+            delete_pid_state(server_id)
+            with status_lock:
+                ALL_SERVERS_STATUS.pop(server_id, None)
+
+    def update_connection(self, server_id, host=None, user=None, password=None):
+        with self._manager_lock:
+            configs = self._load_configs()
+            target = next((s for s in configs if s["alias"] == server_id), None)
+            if not target:
+                raise ValueError(f"Server '{server_id}' not found.")
+            updated = copy.deepcopy(target)
+            if host is not None:
+                updated["idrac_ip"] = host.strip()
+            if user is not None:
+                updated["idrac_username"] = user
+            if password is not None and password != "":
+                updated["idrac_password"] = password
+            self.validate_settings(updated)
+            idx = configs.index(target)
+            configs[idx] = updated
+
+            worker = self.get_worker(server_id)
+            pid_state = None
+            if worker:
+                pid_state = self._stop_worker_locked(server_id, remove_discovery=False)
+            self._save_configs(configs)
+            if updated.get("enabled", True) and (worker is not None):
+                self._start_worker_locked(copy.deepcopy(updated), pid_state=pid_state)
+                update_watchdog_heartbeat(self.workers)
+
+    def apply_settings(self, server_id, new_settings):
+        self.validate_settings(new_settings)
+        with self._manager_lock:
+            configs = self._load_configs()
+            idx = next((i for i, s in enumerate(configs) if s["alias"] == server_id), None)
+            if idx is None:
+                raise ValueError(f"Server '{server_id}' not found.")
+            old_settings = configs[idx]
+            conn_changed = (
+                old_settings.get("idrac_ip") != new_settings.get("idrac_ip")
+                or old_settings.get("idrac_username") != new_settings.get("idrac_username")
+                or old_settings.get("idrac_password") != new_settings.get("idrac_password")
+            )
+            saved = copy.deepcopy(new_settings)
+            configs[idx] = saved
+            self._save_configs(configs)
+
+            worker = self.get_worker(server_id)
+            enabled = saved.get("enabled", True)
+
+            if not enabled:
+                if worker:
+                    self._stop_worker_locked(server_id, remove_discovery=False)
+                return
+
+            if worker is None:
+                self._start_worker_locked(copy.deepcopy(saved))
+                update_watchdog_heartbeat(self.workers)
+                return
+
+            if conn_changed:
+                pid_state = self._stop_worker_locked(server_id, remove_discovery=False)
+                self._start_worker_locked(copy.deepcopy(saved), pid_state=pid_state)
+                update_watchdog_heartbeat(self.workers)
+                return
+
+            with worker._cycle_lock:
+                worker.config = copy.deepcopy(saved)
+                worker.min_safe_fan_speed = max(5, min(100, int(saved.get("min_safe_fan_speed", 20))))
+
+                pid_cfg = saved.get("pid_config", {})
+                target_temp = pid_cfg.get("target_temp")
+                if target_temp is None or target_temp == "":
+                    target_temp = saved.get("target_temp", 50)
+                min_speed = max(int(pid_cfg.get("min_speed", 15)), worker.min_safe_fan_speed)
+                max_speed = int(pid_cfg.get("max_speed", 95))
+                if max_speed < min_speed:
+                    max_speed = min_speed
+                deadband = pid_cfg.get("deadband", 0.75)
+                ti_seconds = pid_cfg.get("ti_seconds", 300.0)
+                ramp_down = pid_cfg.get("ramp_down_percent_per_min")
+                if ramp_down is None or ramp_down == "":
+                    ramp_down = 4.0
+                crit_raw = saved.get("critical_temp_threshold")
+                critical_temp = float(crit_raw) if crit_raw is not None and str(crit_raw).strip() != "" else None
+
+                worker.pid.set_gains(
+                    setpoint=target_temp,
+                    min_speed=min_speed,
+                    max_speed=max_speed,
+                    deadband=deadband,
+                    ti_seconds=ti_seconds,
+                    ramp_down_per_min=float(ramp_down),
+                    critical_temp=critical_temp,
+                )
+
+                worker.fan_cfg = validate_fan_config(
+                    saved.get("low_temp_threshold", 45),
+                    saved.get("critical_temp_threshold", 65),
+                    saved.get("base_fan_speed_percent", 20),
+                    saved.get("high_temp_fan_speed_percent", 50),
+                )
+
+                poll_int = saved.get("poll_interval_seconds")
+                if poll_int is not None and str(poll_int).strip() != "":
+                    worker.poll_interval = max(5.0, float(poll_int))
+                else:
+                    worker.poll_interval = float(self.global_opts.get("check_interval_seconds", 60))
+                worker._interval_overrun_warned = False
+                worker.fan_monitor.set_poll_seconds(worker.poll_interval)
+
+                if not saved.get("fan_control_enabled", True) and worker.in_manual_control:
+                    worker.ipmi.apply_dell_fan_control_profile()
+                    worker._set_manual_control(False)
+
+                want_disable_pcie = bool(saved.get("disable_pcie_cooling_response", False))
+                if want_disable_pcie and not worker._pcie_response_disabled:
+                    if worker.ipmi.set_third_party_pcie_cooling_response(enabled=False):
+                        worker._pcie_response_disabled = True
+                elif not want_disable_pcie and worker._pcie_response_disabled:
+                    if worker.ipmi.set_third_party_pcie_cooling_response(enabled=True):
+                        worker._pcie_response_disabled = False
+
+                snmp_changed = (
+                    old_settings.get("snmp_enabled") != saved.get("snmp_enabled")
+                    or old_settings.get("snmp_community") != saved.get("snmp_community")
+                    or old_settings.get("snmp_port") != saved.get("snmp_port")
+                    or old_settings.get("disk_poll_minutes") != saved.get("disk_poll_minutes")
+                )
+                if snmp_changed:
+                    if worker.disk_poller:
+                        worker.disk_poller.stop()
+                        worker.disk_poller.join(timeout=3.0)
+                        worker.disk_poller = None
+                    if saved.get("snmp_enabled", False) and saved.get("snmp_community"):
+                        worker.disk_poller = DiskHealthPoller(
+                            server_alias=worker.alias,
+                            ip=saved["idrac_ip"],
+                            community=saved["snmp_community"],
+                            port=int(saved.get("snmp_port", 161)),
+                            poll_minutes=int(saved.get("disk_poll_minutes", 10)),
+                            mqtt_client=worker.mqtt,
+                            log_fn=worker._log,
+                            on_update_fn=worker._on_disks_updated,
+                        )
+                        worker.disk_poller.start()
+
+            update_watchdog_heartbeat(self.workers)
+
+
 # --- Main Execution ---
 if __name__ == "__main__":
     print("[MAIN] ===== HA iDRAC Multi-Server Controller Starting =====", flush=True)
@@ -787,14 +1108,15 @@ if __name__ == "__main__":
     web.start()
 
     worker_instances.clear()
-    for server_conf in servers_configs_list:
-        if server_conf.get("enabled", False):
-            worker = ServerWorker(server_conf, global_options)
-            worker_instances.append(worker)
-            thread = threading.Thread(target=worker.run, daemon=True)
-            threads.append(thread)
-            thread.start()
-    update_watchdog_heartbeat()
+    server_manager = ServerManager(
+        global_options,
+        config_file="/data/servers_config.json",
+        config_lock=web_server.config_lock,
+        workers=worker_instances,
+        threads_list=threads,
+    )
+    web_server.server_manager = server_manager
+    server_manager.start_all(servers_configs_list)
 
     # Supervisor watchdog endpoint: 503 only if every configured worker has
     # died, not when the iDRAC/MQTT is merely unreachable (the worker stays

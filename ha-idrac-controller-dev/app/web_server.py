@@ -3,7 +3,6 @@ from flask import Flask, render_template, request, redirect, flash
 from markupsafe import Markup
 import os
 import json
-import logging
 import re
 import subprocess
 import threading
@@ -24,7 +23,6 @@ except (ImportError, ValueError):
         else:
             disk_health = None
 
-log = logging.getLogger('werkzeug')
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
@@ -392,12 +390,3 @@ def test_snmp(alias):
         return {"success": False, "error": "snmpwalk timed out.", "disks": [], "raw": ""}, 200
     except Exception as e:
         return {"success": False, "error": str(e), "disks": [], "raw": ""}, 200
-
-
-def run_web_server(port, status_file_path, lock):
-    global STATUS_FILE, status_lock
-    STATUS_FILE = status_file_path
-    status_lock = lock
-
-    host = '0.0.0.0'
-    app.run(host=host, port=port, debug=False, use_reloader=False)

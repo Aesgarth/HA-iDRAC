@@ -1,3 +1,7 @@
+## 0.1.0-dev.25 - 2026-11-13
+
+* Serve UI with waitress; quieter logs
+
 ## 0.1.0-dev.24 - 2026-11-12
 
 * 🛡️ **Disk Monitoring Staleness Safety Net**:

@@ -1,5 +1,6 @@
 # HA-iDRAC/ha-idrac-controller-dev/app/main.py
 import json
+import logging
 import os
 import re
 import signal
@@ -12,6 +13,7 @@ from .mqtt_client import MqttClient
 from .adaptive_pid import AdaptiveFanController
 from .disk_health import DiskHealthPoller, walk_physical_disks
 from . import web_server
+from .webserver import WebServer
 
 # --- Global Variables ---
 running = True
@@ -555,6 +557,15 @@ if __name__ == "__main__":
         "critical_temp_threshold": int(os.getenv("CRITICAL_TEMP_THRESHOLD", 65)),
     }
 
+    is_debug = str(global_options.get("log_level", "info")).lower() == "debug"
+    logging.basicConfig(
+        level=logging.DEBUG if is_debug else logging.INFO,
+        format="[%(levelname)s] %(message)s",
+    )
+    web_log_level = logging.DEBUG if is_debug else logging.WARNING
+    logging.getLogger("waitress").setLevel(web_log_level)
+    logging.getLogger("werkzeug").setLevel(web_log_level)
+
     servers_configs_list = []
     if not os.path.exists("/data/servers_config.json"):
         with open("/data/servers_config.json", 'w') as f:
@@ -567,9 +578,11 @@ if __name__ == "__main__":
                 pass
 
     web_server.global_config = global_options
+    web_server.STATUS_FILE = STATUS_FILE
+    web_server.status_lock = status_lock
     web_server_port = int(os.getenv("INGRESS_PORT", 8099))
-    web_thread = threading.Thread(target=web_server.run_web_server, args=(web_server_port, STATUS_FILE, status_lock), daemon=True)
-    web_thread.start()
+    web = WebServer(web_server.app, host="0.0.0.0", port=web_server_port)
+    web.start()
 
     worker_instances = []
     for server_conf in servers_configs_list:
@@ -607,4 +620,5 @@ if __name__ == "__main__":
         thread.join(timeout=remaining)
         if thread.is_alive():
             print(f"[WARNING] [{worker.alias}] Worker thread did not terminate within shutdown deadline.", flush=True)
+    web.stop()
     print("[MAIN] ===== HA iDRAC Controller Stopped =====", flush=True)

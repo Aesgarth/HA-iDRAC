@@ -152,3 +152,65 @@ def test_exposes_applied_feedforward_and_overcooled_flag():
     ctl.update(33, 11, 400, now=30.0)
     assert ctl.overcooled is True
     assert ctl.last_feedforward <= 20.0
+
+
+def test_single_brief_spike_does_not_trigger_emergency_when_critical_is_far():
+    ctl = Ctl(37, max_speed=95, critical_temp=65)
+    ctl.theta = [0.1005, 0.0098]
+    ctl.speed = 18.0
+    speed = ctl.update(47, 11, 196, now=0.0)
+    assert speed < 95
+
+
+def test_sustained_high_temperature_triggers_emergency():
+    ctl = Ctl(37, max_speed=95, critical_temp=65)
+    ctl.theta = [0.1005, 0.0098]
+    ctl.speed = 18.0
+    ctl.update(52, 11, 196, now=0.0)
+    assert ctl.update(52, 11, 196, now=10.0) == 95
+
+
+def test_near_critical_triggers_immediately():
+    ctl = Ctl(37, max_speed=95, critical_temp=65)
+    ctl.speed = 18.0
+    assert ctl.update(61, 11, 196, now=0.0) == 95
+
+
+def test_emergency_limit_scales_with_critical_threshold():
+    assert Ctl(37, critical_temp=65).emergency_limit() == pytest.approx(51.0)
+    assert Ctl(37).emergency_limit() == pytest.approx(45.0)
+    assert Ctl(37, critical_temp=40).emergency_limit() == pytest.approx(45.0)
+
+
+def test_learns_fan_power_from_power_floor():
+    ctl = Ctl(50)
+    for _ in range(25):
+        for speed in (15, 25, 45, 65, 85):
+            ctl._track_power_floor(190 + 80 * (speed / 100.0) ** 3, speed, 10.0)
+    assert ctl.fan_power_k == pytest.approx(80.0, abs=15.0)
+
+
+def test_no_compensation_until_enough_speed_range_seen():
+    ctl = Ctl(50)
+    for _ in range(40):
+        ctl._track_power_floor(190, 18, 10.0)
+    assert ctl.fan_power_k == 0.0
+    assert ctl._load_power(250, 90) == 250
+
+
+def test_compensated_power_never_drops_below_half():
+    ctl = Ctl(50)
+    ctl.fan_power_k = 200.0
+    assert ctl._load_power(100, 95) == pytest.approx(50.0)
+
+
+def test_power_floor_survives_state_roundtrip():
+    ctl = Ctl(50)
+    for _ in range(25):
+        for speed in (15, 85):
+            ctl._track_power_floor(190 + 80 * (speed / 100.0) ** 3, speed, 10.0)
+    other = Ctl(50)
+    ctl.theta = [0.1, 0.01]
+    other.load_state(ctl.get_state())
+    other._track_power_floor(190 + 80 * 0.15 ** 3, 15, 10.0)
+    assert other.fan_power_k == pytest.approx(ctl.fan_power_k, rel=0.2)

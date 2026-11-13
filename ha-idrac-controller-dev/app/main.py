@@ -99,6 +99,15 @@ class ServerWorker:
         if ramp_down is None or ramp_down == "":
             ramp_down = 4.0
 
+        critical_temp = self.config.get('critical_temp_threshold')
+        if critical_temp is not None and str(critical_temp).strip() != "":
+            try:
+                critical_temp = float(critical_temp)
+            except (TypeError, ValueError):
+                critical_temp = None
+        else:
+            critical_temp = None
+
         self.pid = AdaptiveFanController(
             setpoint=target_temp,
             min_speed=min_speed,
@@ -106,6 +115,7 @@ class ServerWorker:
             deadband=deadband,
             ti_seconds=ti_seconds,
             slew_down_per_min=float(ramp_down),
+            critical_temp=critical_temp,
         )
         self.fan_state = SimpleFanState()
 
@@ -356,7 +366,7 @@ class ServerWorker:
                             f"PID update: temp={hottest_cpu}°C, inlet={inlet}°C, power={power}W, "
                             f"feedforward={feed_speed:.1f}%, trim={self.pid.trim:.2f}%, "
                             f"theta={[round(t, 4) for t in self.pid.theta]}, samples={self.pid.samples}, "
-                            f"overcooled={self.pid.overcooled}",
+                            f"overcooled={self.pid.overcooled}, fan_power={self.pid.fan_power_k:.1f}W",
                         )
                         if speed is not None:
                             target_fan_speed = clamp_speed(

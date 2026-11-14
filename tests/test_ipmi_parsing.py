@@ -208,6 +208,17 @@ def test_12g_psu_empty_bay_omitted():
     assert make_manager().get_power_status(sdr) == [{"name": "PSU1", "ok": True}]
 
 
+def test_12g_failed_psu_never_treated_as_absent():
+    sdr_cr_failure = "Status           | 62h | cr  | 10.1 | Failure detected\n"
+    assert make_manager().get_power_status(sdr_cr_failure) == [{"name": "PSU1", "ok": False}]
+
+    sdr_presence_failure = "Status           | 62h | ok  | 10.1 | Presence detected, Failure detected\n"
+    assert make_manager().get_power_status(sdr_presence_failure) == [{"name": "PSU1", "ok": False}]
+
+    sdr_absent_ns = "Status           | 62h | ns  | 10.1 | Absent\n"
+    assert make_manager().get_power_status(sdr_absent_ns) == []
+
+
 def test_psu_absence_logging_no_10x_lines_logs_info_once():
     mgr = make_manager()
     logs = []

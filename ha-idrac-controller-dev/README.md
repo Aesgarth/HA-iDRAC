@@ -37,7 +37,7 @@
 
 Target Temperature mode learns how much cooling your specific server needs instead of relying on fixed manual guesses:
 
-* **Learning & persistence:** The controller collects steady-load samples over a 150 s window (when CPU temperature, fan speed, inlet temperature, and power are all steady and power is at least 20 W) to fit the server's cooling curve (`theta`) and fan power draw (`power_floor`). In the first hours before enough samples are gathered, it starts conservatively and may run fans higher than needed. Learned state is saved to `/data/pid_state.json` and survives restarts and live settings edits.
+* **Learning & persistence:** The controller collects steady-load samples over a 150 s window (when CPU temperature, fan speed, inlet temperature, and power are all steady and power is at least 20 W) to fit the server's cooling curve (`theta`) and fan power draw (`power_floor`). In the first hours before enough samples are gathered, it starts conservatively and may run fans higher than needed. Learned state is saved to `/data/pid_states.json` and survives restarts and live settings edits.
 * **Fan power compensation:** Because total system power includes the fans themselves (which rises steeply with speed), the controller learns each speed band's baseline power floor and subtracts estimated fan power from total power so spinning up the fans does not look like increased CPU load.
 * **Key parameters:**
   * **Setpoint (`Target Temperature`):** Desired CPU temperature (°C).

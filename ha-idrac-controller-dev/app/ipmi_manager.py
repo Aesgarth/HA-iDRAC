@@ -36,13 +36,13 @@ _POWER_RE = re.compile(
 # "PS1 Status       | 0Ah | ok | 10.1 | Presence detected"
 # "Status           | 62h | ok | 10.1 | Presence detected"
 _PSU_STATUS_RE = re.compile(
-    r"^(?:PS\d+\s+Status|Status)\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|u)\s*\|"
+    r"^(?:PS\d+\s+Status|Status)\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|nc|u)\s*\|"
     r"\s*10\.(?P<index>\d+)\s*\|\s*(?P<reading>.*)$",
     re.IGNORECASE,
 )
 # "PS1 PG Fail      | 0Ch | ok | 10.1 |"
 _PSU_FAIL_RE = re.compile(
-    r"^PS(?P<index>\d+)\s+PG Fail\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|u)",
+    r"^PS(?P<index>\d+)\s+PG Fail\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|nc|u)",
     re.IGNORECASE,
 )
 _ENTITY_10_RE = re.compile(r"\|\s*10\.\d+\s*\|")
@@ -418,12 +418,16 @@ class IPMIManager:
             if match:
                 index = match.group("index")
                 status = match.group("status").lower()
-                reading = match.group("reading").lower()
+                reading = match.group("reading").strip().lower()
                 entry = psus.setdefault(index, {})
-                entry["present"] = "presence detected" in reading
-                is_fault = (status not in ("ok", "nr", "ns")) or any(
-                    kw in reading for kw in _PSU_FAULT_READING_KEYWORDS
+                has_fault_phrase = any(kw in reading for kw in _PSU_FAULT_READING_KEYWORDS)
+                is_present = (
+                    ("presence detected" in reading)
+                    or (status not in ("ok", "ns", "nr"))
+                    or has_fault_phrase
                 )
+                entry["present"] = entry.get("present", False) or is_present
+                is_fault = (status not in ("ok", "nr", "ns")) or has_fault_phrase
                 entry["fault"] = entry.get("fault", False) or is_fault
                 continue
 

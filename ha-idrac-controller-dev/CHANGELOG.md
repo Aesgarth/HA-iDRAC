@@ -1,3 +1,7 @@
+## 0.1.0-dev.33 - 2026-11-14
+
+* PSU: failed supply no longer treated as absent; README path fix
+
 ## 0.1.0-dev.32 - 2026-11-13
 
 * Restore PSU sensors on 12G (entity-based parsing)

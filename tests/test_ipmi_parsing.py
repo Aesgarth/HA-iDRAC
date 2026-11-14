@@ -165,3 +165,79 @@ def test_implausible_temperature_is_ignored():
     sdr = "CPU1 Temp | 01h | ok | 3.1 | 255 degrees C\n" \
           "CPU2 Temp | 02h | ok | 3.2 | 47 degrees C\n"
     assert make_manager().parse_temperatures(sdr)["cpu_temps"] == [47]
+
+
+def test_12g_psu_status_two_present_and_ignores_cpu_status():
+    sdr = (
+        "Status           | 60h | ok  |  3.1 | Presence detected\n"
+        "Status           | 61h | ok  |  3.2 | Presence detected\n"
+        "Status           | 62h | ok  | 10.1 | Presence detected\n"
+        "Status           | 63h | ok  | 10.2 | Presence detected\n"
+    )
+    assert make_manager().get_power_status(sdr) == [
+        {"name": "PSU1", "ok": True},
+        {"name": "PSU2", "ok": True},
+    ]
+
+
+def test_12g_psu_fault_by_status_or_reading():
+    sdr_cr = (
+        "Status           | 62h | cr  | 10.1 | Presence detected\n"
+        "Status           | 63h | ok  | 10.2 | Presence detected\n"
+    )
+    assert make_manager().get_power_status(sdr_cr) == [
+        {"name": "PSU1", "ok": False},
+        {"name": "PSU2", "ok": True},
+    ]
+
+    sdr_kw = (
+        "Status           | 62h | ok  | 10.1 | Presence detected, Failure detected\n"
+        "Status           | 63h | ok  | 10.2 | Presence detected, AC lost\n"
+    )
+    assert make_manager().get_power_status(sdr_kw) == [
+        {"name": "PSU1", "ok": False},
+        {"name": "PSU2", "ok": False},
+    ]
+
+
+def test_12g_psu_empty_bay_omitted():
+    sdr = (
+        "Status           | 62h | ok  | 10.1 | Presence detected\n"
+        "Status           | 63h | ok  | 10.2 | 0x00\n"
+    )
+    assert make_manager().get_power_status(sdr) == [{"name": "PSU1", "ok": True}]
+
+
+def test_psu_absence_logging_no_10x_lines_logs_info_once():
+    mgr = make_manager()
+    logs = []
+    mgr._log = lambda lvl, msg: logs.append((lvl, msg))
+    sdr = "Status           | 60h | ok  |  3.1 | Presence detected\n"
+
+    assert mgr.get_power_status(sdr) == []
+    assert mgr.get_power_status(sdr) == []
+    info_msgs = [msg for lvl, msg in logs if lvl == "info"]
+    assert info_msgs == ["No power supply sensors exposed by this iDRAC"]
+
+
+def test_psu_absence_logging_unparsed_10x_lines_logs_warning_once():
+    mgr = make_manager()
+    logs = []
+    mgr._log = lambda lvl, msg: logs.append((lvl, msg))
+    sdr = "Weird PSU Sensor | 62h | ok  | 10.1 | Unknown\n"
+
+    assert mgr.get_power_status(sdr) == []
+    assert mgr.get_power_status(sdr) == []
+    warn_msgs = [msg for lvl, msg in logs if lvl == "warning"]
+    assert len(warn_msgs) == 1
+    assert "Weird PSU Sensor" in warn_msgs[0]
+
+
+def test_real_r720_fixture_parses_exactly_two_psus():
+    from pathlib import Path
+    fixture = Path(__file__).parent / "fixtures" / "idrac7_r720_sdr_elist.txt"
+    sdr = fixture.read_text(encoding="utf-8")
+    assert make_manager().get_power_status(sdr) == [
+        {"name": "PSU1", "ok": True},
+        {"name": "PSU2", "ok": True},
+    ]

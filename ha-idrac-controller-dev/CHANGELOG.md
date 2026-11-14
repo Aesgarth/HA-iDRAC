@@ -1,3 +1,7 @@
+## 0.1.0-dev.32 - 2026-11-13
+
+* Restore PSU sensors on 12G (entity-based parsing)
+
 ## 0.1.0-dev.31 - 2026-11-13
 
 * Rename changelog to CHANGELOG.md so Home Assistant shows it

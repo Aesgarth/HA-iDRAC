@@ -1,0 +1,15 @@
+Presence         | 43h | ok  | 10.2 | Present
+Status           | 60h | ok  |  3.1 | Presence detected
+Status           | 61h | ok  |  3.2 | Presence detected
+Fan Redundancy   | 75h | ok  |  7.1 | Fully Redundant
+Presence         | 42h | ok  | 10.1 | Present
+Current 1        | 6Ah | ok  | 10.1 | 0.80 Amps
+Current 2        | 6Bh | ok  | 10.2 | 0.20 Amps
+Voltage 1        | 6Ch | ok  | 10.1 | 242 Volts
+Voltage 2        | 6Dh | ok  | 10.2 | 244 Volts
+PS Redundancy    | 74h | ok  |  7.1 | Fully Redundant
+Status           | 62h | ok  | 10.1 | Presence detected
+Status           | 63h | ok  | 10.2 | Presence detected
+Redundancy       | 78h | ns  | 11.3 | Disabled
+TXT Status       | 2Ah | ns  | 34.1 | No Reading
+

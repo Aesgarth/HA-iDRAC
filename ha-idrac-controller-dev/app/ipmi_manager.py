@@ -34,15 +34,24 @@ _POWER_RE = re.compile(
     re.IGNORECASE,
 )
 # "PS1 Status       | 0Ah | ok | 10.1 | Presence detected"
+# "Status           | 62h | ok | 10.1 | Presence detected"
 _PSU_STATUS_RE = re.compile(
-    r"^PS(?P<index>\d)\s+Status\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|u)\s*\|"
-    r"[^|]*\|\s*(?P<reading>.*)$",
+    r"^(?:PS\d+\s+Status|Status)\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|u)\s*\|"
+    r"\s*10\.(?P<index>\d+)\s*\|\s*(?P<reading>.*)$",
     re.IGNORECASE,
 )
 # "PS1 PG Fail      | 0Ch | ok | 10.1 |"
 _PSU_FAIL_RE = re.compile(
-    r"^PS(?P<index>\d)\s+PG Fail\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|u)",
+    r"^PS(?P<index>\d+)\s+PG Fail\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|u)",
     re.IGNORECASE,
+)
+_ENTITY_10_RE = re.compile(r"\|\s*10\.\d+\s*\|")
+_PSU_FAULT_READING_KEYWORDS = (
+    "failure detected",
+    "ac lost",
+    "predictive failure",
+    "configuration error",
+    "input lost",
 )
 _CPU_NAME_RE = re.compile(r"(?:^|\b)CPU\s?\d", re.IGNORECASE)
 
@@ -60,6 +69,7 @@ class IPMIManager:
         # a later failure can never leave the fans pinned at a user speed.
         self.fan_control_refused = False
         self.fan_control_ever_accepted = False
+        self._psu_absence_logged = False
         self._log("info", f"IPMI Manager initialized for host: {self.ip}")
 
     def _build_base_args(self, conn_type):
@@ -407,19 +417,26 @@ class IPMIManager:
             match = _PSU_STATUS_RE.match(line)
             if match:
                 index = match.group("index")
+                status = match.group("status").lower()
                 reading = match.group("reading").lower()
-                psus.setdefault(index, {})["present"] = "presence detected" in reading
+                entry = psus.setdefault(index, {})
+                entry["present"] = "presence detected" in reading
+                is_fault = (status not in ("ok", "nr", "ns")) or any(
+                    kw in reading for kw in _PSU_FAULT_READING_KEYWORDS
+                )
+                entry["fault"] = entry.get("fault", False) or is_fault
                 continue
 
             match = _PSU_FAIL_RE.match(line)
             if match:
                 index = match.group("index")
                 status = match.group("status").lower()
-                psus.setdefault(index, {})["fault"] = status not in ("ok", "nr", "ns")
+                entry = psus.setdefault(index, {})
+                entry["fault"] = entry.get("fault", False) or (status not in ("ok", "nr", "ns"))
                 continue
 
         final_status = []
-        for index, data in sorted(psus.items()):
+        for index, data in sorted(psus.items(), key=lambda kv: int(kv[0])):
             if not data.get("present", False):
                 # Empty PSU bay: no entity, instead of a permanent problem sensor.
                 continue
@@ -427,6 +444,17 @@ class IPMIManager:
             is_ok = not data.get("fault", False)
             final_status.append({"name": name, "ok": is_ok})
             self._log("debug", f"PSU Status for {name}: Fault={data.get('fault', False)} -> Final OK={is_ok}")
+
+        if not final_status and not self._psu_absence_logged:
+            entity_10_lines = [ln.strip() for ln in sdr_data.splitlines() if _ENTITY_10_RE.search(ln)]
+            if entity_10_lines:
+                self._log(
+                    "warning",
+                    f"No PSUs parsed, but SDR contains entity 10.x lines: {'; '.join(entity_10_lines)}",
+                )
+            else:
+                self._log("info", "No power supply sensors exposed by this iDRAC")
+            self._psu_absence_logged = True
 
         return final_status
 

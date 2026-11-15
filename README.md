@@ -51,15 +51,15 @@ control and hardware monitoring.
 
 ## Add-ons
 
-1. **HA iDRAC Controller** (`ha_idrac_controller`, version 0.1.4, "stable")
-   - Single server, configured from the add-on Configuration tab.
-   - Simple 3-tier fan control with hysteresis, monitoring, MQTT discovery.
+| Name | For whom | Servers | Fan control | Extras |
+|---|---|---|---|---|
+| [**HA iDRAC Controller Standard**](ha-idrac-standard/README.md) (`ha_idrac_controller_standard`, `0.2.0`) | Recommended for everyday use | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Fan failure detection, SNMP disk health, watchdog, live UI settings |
+| [**HA iDRAC Controller BETA**](ha-idrac-controller-dev/README.md) (`ha_idrac_controller_development`) | Testing new features | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Same as Standard, receives changes first |
+| [**HA iDRAC Controller**](ha-idrac-controller/README.md) (`ha_idrac_controller`, `0.1.2`) | Legacy / under review | Single server | Simple 3-tier with hysteresis | No self-learning, no disk monitoring, has not received recent sensor fixes |
 
-2. **HA iDRAC Controller BETA** (`ha_idrac_controller_development`)
-   - Multi-server, per-server fan modes (simple / curve / self-learning target temperature),
-     fan failure detection, SNMP disk health monitoring, in-container safety watchdog,
-     live UI settings without restarting, and graceful shutdown button.
-   - See [ha-idrac-controller-dev/README.md](ha-idrac-controller-dev/README.md) for full documentation of all new features, entities, and settings.
+### Which one should I use?
+
+Use **HA iDRAC Controller Standard** for normal use. Only install **HA iDRAC Controller BETA** if you want to test upcoming changes before they land in Standard. **Never run two add-ons against the same iDRAC server at the same time**, as both will send competing IPMI fan commands.
 
 > Both add-ons use the standard 12G/13G Dell fan-control sequence:
 > `raw 0x30 0x30 0x01 0x00` (manual) and `raw 0x30 0x30 0x02 0xff <pct>`.

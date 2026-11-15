@@ -1,5 +1,7 @@
 # Home Assistant iDRAC Controller Add-on (Development Version)
 
+> **Development Add-on:** This is the development add-on for testing new features. Use **HA iDRAC Controller Standard** for everyday use, and never run Dev and Standard against the same iDRAC at the same time.
+
 **<font color="red">⚠️ DEVELOPMENT VERSION - USE WITH CAUTION! ⚠️</font>**
 **<font color="red">⚠️ Known issue: When first started and learning, PID mode can and probably will ramp fans up to near their highest configured speed. There is a very good chance your server will be LOUD ⚠️</font>**
 

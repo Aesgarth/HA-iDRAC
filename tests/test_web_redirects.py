@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("flask")
 
-from conftest import load_module, ROOT
+from conftest import load_module, resolve_addon_path
 
 web_server = load_module("dev_web_server", "ha-idrac-controller-dev/app/web_server.py")
 
@@ -25,7 +25,7 @@ def client(tmp_path):
         "high_temp_fan_speed_percent": 50,
         "critical_temp_threshold": 65,
     }
-    web_server.app.template_folder = str(ROOT / "ha-idrac-controller-dev/app/templates")
+    web_server.app.template_folder = str(resolve_addon_path("ha-idrac-controller-dev/app/templates"))
     web_server.app.config["TESTING"] = True
     with web_server.app.test_client() as test_client:
         yield test_client

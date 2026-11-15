@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Manage iDRAC Servers</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+
+<body>
+    <div class="main-container">
+        <h1>Manage iDRAC Servers</h1>
+        <p><a href="./">&laquo; Back to Dashboard</a></p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <ul class=flashes>
+            {% for category, message in messages %}
+            <li class="{{ category }}">{{ message }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endwith %}
+
+        <div class="container">
+            <h2>Configured Servers</h2>
+            <table class="server-table">
+                <thead>
+                    <tr>
+                        <th>Enabled</th>
+                        <th>Alias</th>
+                        <th>iDRAC IP</th>
+                        <th>Username</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for server in servers %}
+                    <tr>
+                        <td>{{ 'Yes' if server.enabled else 'No' }}</td>
+                        <td>{{ server.alias }}</td>
+                        <td>{{ server.idrac_ip }}</td>
+                        <td>{{ server.idrac_username }}</td>
+                        <td class="actions">
+                            <a href="servers/edit/{{ server.alias }}" class="button">Edit</a>
+                            <form action="servers/delete/{{ server.alias }}" method="POST"
+                                onsubmit="return confirm('Are you sure you want to delete this server?');">
+                                <button type="submit" class="destructive">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5">No servers configured.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="container">
+            <details {% if not servers %}open{% endif %}>
+                <summary>Add New Server</summary>
+                <form action="servers/add" method="POST" class="form-grid">
+                    <div class="form-group">
+                        <label for="alias">Alias</label>
+                        <input type="text" id="alias" name="alias" placeholder="e.g., R720-Main" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idrac_ip">iDRAC IP Address</label>
+                        <input type="text" id="idrac_ip" name="idrac_ip" placeholder="e.g., 192.168.1.10" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idrac_username">Username</label>
+                        <input type="text" id="idrac_username" name="idrac_username" value="root" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idrac_password">Password</label>
+                        <input type="password" id="idrac_password" name="idrac_password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="fan_control_enabled">Fan Control</label>
+                        <select id="fan_control_enabled" name="fan_control_enabled">
+                            <option value="true" selected>Enabled</option>
+                            <option value="false">Disabled (Monitor Only)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="disable_pcie_cooling_response">Third-party PCIe cooling</label>
+                        <select id="disable_pcie_cooling_response" name="disable_pcie_cooling_response">
+                            <option value="false" selected>Dell default (recommended)</option>
+                            <option value="true">Disabled (quieter with non-Dell cards)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="on_fan_fault">On fan fault</label>
+                        <select id="on_fan_fault" name="on_fan_fault">
+                            <option value="dell_auto" selected>Dell Auto (recommended)</option>
+                            <option value="raise_fans">Raise working fans to 80%+</option>
+                            <option value="alert_only">Alert only</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="base_fan_speed_percent">Base Fan Speed (%)</label>
+                        <input type="number" id="base_fan_speed_percent" name="base_fan_speed_percent"
+                            value="{{ defaults.base_fan_speed_percent }}" min="5" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="low_temp_threshold">Low Temp Threshold (°C)</label>
+                        <input type="number" id="low_temp_threshold" name="low_temp_threshold"
+                            value="{{ defaults.low_temp_threshold }}" min="0" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="high_temp_fan_speed_percent">High Temp Fan Speed (%)</label>
+                        <input type="number" id="high_temp_fan_speed_percent" name="high_temp_fan_speed_percent"
+                            value="{{ defaults.high_temp_fan_speed_percent }}" min="5" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="critical_temp_threshold">Critical Temp Threshold (°C)</label>
+                        <input type="number" id="critical_temp_threshold" name="critical_temp_threshold"
+                            value="{{ defaults.critical_temp_threshold }}" min="0" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="poll_interval_seconds">Poll Interval (seconds)</label>
+                        <input type="number" id="poll_interval_seconds" name="poll_interval_seconds" min="5"
+                            placeholder="Default (global)">
+                        <small>Seconds between readings. 10 is a good value for PID mode; very small values load the
+                            iDRAC.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="min_safe_fan_speed">Minimum safe fan speed (%)</label>
+                        <input type="number" id="min_safe_fan_speed" name="min_safe_fan_speed" value="20" min="5"
+                            max="100"
+                            oninput="document.getElementById('min_safe_fan_speed_warn').style.display = (this.value !== '' && Number(this.value) < 15) ? 'block' : 'none';">
+                        <small>Because Dell manual mode has no timeout, fans stay at or above this speed if the add-on
+                            or Home Assistant host dies.</small>
+                        <small id="min_safe_fan_speed_warn" style="display: none; color: #f0ad4e; font-weight: bold;">
+                            Warning: values below 15% may not cool the server safely if the host dies.</small>
+                    </div>
+                    <details class="form-group" style="grid-column: span 2; margin-top: 0.5em;">
+                        <summary style="cursor: pointer; font-weight: bold;">Advanced Settings</summary>
+                        <div class="form-grid" style="margin-top: 1em;">
+                            <div class="form-group">
+                                <label for="ramp_down_percent_per_min">Ramp Down Rate (% / min)</label>
+                                <input type="number" id="ramp_down_percent_per_min" name="ramp_down_percent_per_min"
+                                    value="4" min="1" max="50">
+                                <small>How fast fans slow down after a temperature spike. Lower is quieter and steadier,
+                                    higher saves fan noise sooner.</small>
+                            </div>
+                        </div>
+                    </details>
+                    <details class="form-group" style="grid-column: span 2; margin-top: 0.5em;">
+                        <summary style="cursor: pointer; font-weight: bold;">Disk Health (SNMP)</summary>
+                        <div class="form-grid" style="margin-top: 1em;">
+                            <div class="form-group">
+                                <label for="snmp_enabled">Disk Health Monitoring</label>
+                                <select id="snmp_enabled" name="snmp_enabled">
+                                    <option value="false" selected>Disabled</option>
+                                    <option value="true">Enabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="snmp_community">SNMP Community String</label>
+                                <input type="password" id="snmp_community" name="snmp_community"
+                                    placeholder="e.g. public">
+                            </div>
+                            <div class="form-group">
+                                <label for="snmp_port">SNMP Port</label>
+                                <input type="number" id="snmp_port" name="snmp_port" value="161" min="1" max="65535">
+                            </div>
+                            <div class="form-group">
+                                <label for="disk_poll_minutes">Poll Interval (minutes)</label>
+                                <input type="number" id="disk_poll_minutes" name="disk_poll_minutes" value="10" min="1"
+                                    max="1440">
+                            </div>
+                            <div class="form-group" style="grid-column: span 2;">
+                                <small>Uses the same iDRAC address. Enable the SNMP agent in the iDRAC web page
+                                    (Settings, Services, SNMP Agent). Needs an iDRAC Express or Enterprise licence.
+                                    SNMPv2c sends the community string unencrypted on your network.</small>
+                            </div>
+                        </div>
+                    </details>
+                    <div class="form-actions">
+                        <button type="submit">Add Server</button>
+                    </div>
+                </form>
+            </details>
+        </div>
+    </div>
+    <style>
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1em;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            margin-bottom: 0.5em;
+        }
+
+        .form-group input,
+        .form-group select {
+            max-width: none;
+        }
+
+        .form-actions {
+            grid-column: span 2;
+        }
+
+        .server-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .server-table th,
+        .server-table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--divider-color);
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        .server-table th {
+            background-color: var(--secondary-background-color);
+        }
+
+        .server-table .actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .server-table .button,
+        .server-table button {
+            text-decoration: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            color: white;
+            font-size: 0.9em;
+            margin: 0;
+        }
+
+        .server-table .button {
+            background-color: var(--primary-color);
+        }
+
+        .server-table button.destructive {
+            background-color: var(--error-color);
+        }
+
+        details summary {
+            font-size: var(--paper-font-title_-_font-size, 20px);
+            font-weight: var(--paper-font-headline_-_font-weight, 400);
+            color: var(--primary-text-color);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        details[open] summary {
+            margin-bottom: 1em;
+        }
+    </style>
+</body>
+
+</html>

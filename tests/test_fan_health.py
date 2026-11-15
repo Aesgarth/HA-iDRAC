@@ -13,10 +13,6 @@ for mod in ["flask", "markupsafe", "paho", "paho.mqtt", "paho.mqtt.client"]:
 
 fh = load_module("fan_health", "ha-idrac-controller-dev/app/fan_health.py")
 
-dev_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ha-idrac-controller-dev"))
-if dev_dir not in sys.path:
-    sys.path.insert(0, dev_dir)
-
 from app import main  # noqa: E402
 
 

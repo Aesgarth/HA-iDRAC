@@ -9,10 +9,7 @@ for mod in ["flask", "markupsafe", "paho", "paho.mqtt", "paho.mqtt.client"]:
         if mod not in sys.modules:
             sys.modules[mod] = MagicMock()
 
-dev_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ha-idrac-controller-dev"))
-if dev_dir not in sys.path:
-    sys.path.insert(0, dev_dir)
-
+import conftest  # noqa: F401
 from app import main, watchdog  # noqa: E402
 
 
@@ -114,4 +111,30 @@ def test_startup_cleanup_removes_deprecated_entities(tmp_path, monkeypatch):
         assert (f"{fake_mqtt.base_topic}/sensor/{slug}", "", True) in fake_mqtt.published
         assert (f"{fake_mqtt.base_topic}/sensor/{slug}/attributes", "", True) in fake_mqtt.published
         assert (f"{fake_mqtt.base_topic}/sensor/{slug}/availability", "", True) in fake_mqtt.published
+
+
+def test_mqtt_client_id_comes_from_addon_id_env(tmp_path, monkeypatch):
+    from conftest import load_module
+    mqtt_mod = load_module("mqtt_client_env_test", "ha-idrac-controller-dev/app/mqtt_client.py")
+
+    monkeypatch.delenv("ADDON_ID", raising=False)
+    c_default = mqtt_mod.MqttClient()
+    assert c_default.client_id == "ha_idrac_controller"
+
+    monkeypatch.setenv("ADDON_ID", "ha_idrac_standard")
+    c_std = mqtt_mod.MqttClient()
+    assert c_std.client_id == "ha_idrac_standard"
+    c_std.set_device_info("r720", "DELL", "PowerEdge R720", "10.0.0.10")
+    assert c_std.base_topic == "ha_idrac_controller/r720"
+    assert c_std.device_info_dict["identifiers"] == ["idrac_controller_r720"]
+
+    monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
+    monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
+    worker = main.ServerWorker({
+        "alias": "r720",
+        "idrac_ip": "10.0.0.10",
+        "idrac_username": "root",
+        "idrac_password": "pw",
+    }, {"log_level": "warning", "check_interval_seconds": 30})
+    assert worker.mqtt.client_id == "ha_idrac_standard_r720"
 

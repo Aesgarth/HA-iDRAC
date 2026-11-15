@@ -1,0 +1,268 @@
+/* HA-iDRAC/ha-idrac-controller/app/static/style.css */
+
+/* --- Base Styles & HA Theme Variables --- */
+:root { /* Define fallbacks at the root for better cascading if needed */
+    --fallback-light-text: #FFFFFF; /* White for dark themes */
+    --fallback-dark-text: #212121;  /* Dark grey for light themes */
+    --fallback-light-bg: #FFFFFF;
+    --fallback-dark-bg: #111111; /* Dark background for dark themes */
+    --fallback-card-bg-light: #FFFFFF;
+    --fallback-card-bg-dark: #282828; /* Slightly lighter dark for cards */
+    --fallback-divider-light: #e0e0e0;
+    --fallback-divider-dark: #484848;
+    --fallback-primary-color: #03a9f4; /* Default HA blue */
+}
+
+body {
+    font-family: var(--paper-font-body_-_font-family, Roboto, Noto, sans-serif);
+    font-size: var(--paper-font-body_-_font-size, 14px);
+    background-color: var(--primary-background-color, var(--fallback-dark-bg)); /* Ensures body bg follows theme */
+    color: var(--primary-text-color, var(--fallback-light-text)); /* Ensures body text follows theme */
+    margin: 0;
+    padding: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased; /* Smoother fonts */
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.container {
+    background-color: var(--ha-card-background-color, var(--card-background-color, var(--paper-card-background-color, var(--fallback-card-bg-dark))));
+    color: var(--primary-text-color); /* Explicitly set text color for container content */
+    padding: 16px;
+    border-radius: var(--ha-card-border-radius, 12px);
+    box-shadow: var(--ha-card-box-shadow, 0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12));
+    max-width: 800px;
+    margin: 20px auto; /* Add some margin around the container */
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--primary-text-color); /* Ensure headings also use the themed text color */
+    font-weight: var(--paper-font-headline_-_font-weight, 400);
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+}
+
+h1 {
+    font-size: var(--paper-font-headline_-_font-size, 24px);
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--divider-color, var(--fallback-divider-dark));
+    margin-bottom: 1em;
+}
+
+h2 {
+    font-size: var(--paper-font-title_-_font-size, 20px);
+}
+
+h3 {
+    font-size: var(--paper-font-subhead_-_font-size, 16px);
+    color: var(--secondary-text-color, var(--primary-text-color)); /* Fallback to primary if secondary isn't contrasting enough */
+}
+
+p, li, label { /* Apply primary text color to common text elements */
+    color: var(--primary-text-color);
+}
+
+label { /* Specific styling for labels */
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: var(--secondary-text-color, var(--primary-text-color)); /* Labels can be secondary */
+}
+
+
+a {
+    color: var(--primary-color, var(--fallback-primary-color));
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+strong {
+    font-weight: 500; /* Slightly bolder than default browser strong */
+}
+
+/* --- Form Elements --- */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+select {
+    display: block;
+    width: calc(100% - 22px);
+    max-width: 400px;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid var(--divider-color, var(--fallback-divider-dark));
+    border-radius: var(--ha-card-border-radius, 12px);
+    background-color: var(--input-background-color, var(--secondary-background-color, var(--fallback-dark-bg))); /* Input background */
+    color: var(--input-ink-color, var(--primary-text-color, var(--fallback-light-text))); /* Input text color */
+    font-size: 1rem;
+    box-sizing: border-box;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+select:focus {
+    border-color: var(--primary-color, var(--fallback-primary-color));
+    outline: none;
+    box-shadow: 0 0 0 2px var(--primary-color-opd, rgba(var(--rgb-primary-color, var(--rgb-fallback-primary-color)), 0.2));
+}
+
+
+input[type="submit"],
+button[type="button"],
+button {
+    background-color: var(--primary-color, var(--fallback-primary-color));
+    color: var(--text-primary-color-on-primary, var(--text-primary-color, var(--fallback-light-text)));
+    padding: 10px 15px;
+    border: none;
+    border-radius: var(--ha-card-border-radius, 12px);
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: background-color 0.2s ease-in-out;
+    margin-right: 8px;
+    margin-top: 10px;
+}
+
+input[type="submit"]:hover,
+button[type="button"]:hover,
+button:hover {
+    /* Create a slightly darker version of primary-color for hover */
+    /* This is tricky without a pre-defined dark-primary-color that adapts to current primary */
+    /* Using a fixed opacity filter is a common trick if filter is supported well */
+    filter: brightness(90%);
+    background-color: var(--primary-color, var(--fallback-primary-color)); /* Re-apply in case filter doesn't work alone */
+}
+
+/* Specific button types if needed */
+button.destructive, input[type="submit"].destructive {
+    background-color: var(--error-color, #db4437);
+}
+button.destructive:hover, input[type="submit"].destructive:hover {
+    filter: brightness(90%);
+    background-color: var(--error-color, #db4437);
+}
+
+
+/* --- Flash Messages (Alerts) --- */
+ul.flashes {
+    list-style-type: none;
+    padding: 0;
+    margin-bottom: 1em;
+}
+ul.flashes li {
+    padding: 10px 15px;
+    margin-bottom: 10px;
+    border: 1px solid transparent;
+    border-radius: var(--ha-card-border-radius, 12px);
+    /* Text color for flashes should be chosen for contrast against their specific background */
+}
+ul.flashes li.error {
+    color: var(--ha-alert-error-color, var(--error-state-color, #B00020)); /* Text color for error alert */
+    background-color: var(--ha-alert-error-background-color, rgba(var(--rgb-error-color, 219, 68, 55), 0.1));
+    border-color: rgba(var(--rgb-error-color, 219, 68, 55), 0.3);
+}
+ul.flashes li.success {
+    color: var(--ha-alert-success-color, var(--success-state-color, #006400));
+    background-color: var(--ha-alert-success-background-color, rgba(var(--rgb-success-color, 15, 157, 88), 0.1));
+    border-color: rgba(var(--rgb-success-color, 15, 157, 88), 0.3);
+}
+ul.flashes li.warning {
+    color: var(--ha-alert-warning-color, var(--warning-state-color, #FF8F00)); /* Using a more contrasting text for warning */
+    background-color: var(--ha-alert-warning-background-color, rgba(var(--rgb-warning-color, 244, 180, 0), 0.1));
+    border-color: rgba(var(--rgb-warning-color, 244, 180, 0), 0.3);
+}
+
+
+/* --- Fan Curve Point Styling --- */
+.fan-point { 
+    margin-bottom: 15px; 
+    padding: 15px; 
+    border: 1px solid var(--divider-color, var(--fallback-divider-dark)); 
+    background-color: var(--secondary-background-color, var(--fallback-dark-bg)); /* Ensure this contrasts with text */
+    border-radius: var(--ha-card-border-radius, 12px);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.fan-point label { 
+    color: var(--secondary-text-color, var(--primary-text-color)); /* Labels within fan-point */
+    margin-bottom: 0; 
+    flex-shrink: 0;
+}
+.fan-point input[type="number"] { 
+    width: 80px; 
+    padding: 8px; 
+    margin-right: 10px;
+    margin-bottom: 0;
+    /* Ensure input text/bg here also use theme variables, inherited from above */
+}
+.fan-point button { /* Remove button */
+    background-color: var(--error-color, #dc3545);
+    font-size: 0.9em; 
+    padding: 6px 10px;
+    margin-left: auto;
+}
+.fan-point button:hover { 
+    filter: brightness(90%);
+    background-color: var(--error-color, #dc3545);
+}
+
+/* Button to add fan curve points */
+button.add-point { 
+    background-color: var(--success-color, #28a745); /* Use a more distinct class if needed */
+}
+button.add-point:hover {
+    filter: brightness(90%);
+    background-color: var(--success-color, #28a745);
+}
+
+/* --- Lists --- */
+ul, ol {
+    padding-left: 20px;
+}
+li {
+    margin-bottom: 0.5em;
+}
+
+/* --- Status Section Specifics --- */
+.container h2 + p,
+.container h3 + ul,
+.container h3 + p {
+    margin-top: 0.2em;
+}
+
+/* --- Responsive considerations --- */
+@media (max-width: 600px) {
+    body {
+        padding: 8px;
+    }
+    .container {
+        padding: 12px;
+        margin: 10px auto;
+    }
+    .fan-point {
+        flex-direction: column;
+        align-items: stretch; /* Stretch items like labels and inputs */
+    }
+    .fan-point input[type="number"] {
+        width: auto; /* Let it stretch or use calc(100% - 22px) if preferred */
+        margin-right: 0;
+        margin-bottom: 10px;
+    }
+    .fan-point label {
+        width: auto; /* Let it adjust */
+        margin-bottom: 5px; /* Add margin when stacked */
+    }
+    .fan-point button {
+        margin-left: 0;
+        width: 100%;
+        text-align: center;
+    }
+}

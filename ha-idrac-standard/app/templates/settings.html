@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-P">
+    <title>iDRAC Controller Settings</title>
+    <link rel="stylesheet" href="static/style.css">
+    <style>
+        .fan-point { margin-bottom: 10px; padding: 10px; border: 1px solid #ccc; }
+        .fan-point label { display: inline-block; width: 150px; }
+        .fan-point input[type="number"] { width: 60px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Settings - Fan Curve</h1>
+        <p><a href="{{ url_for('index') }}">&laquo; Back to Dashboard</a></p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class=flashes>
+                {% for category, message in messages %}
+                    <li class="{{ category }}">{{ message }}</li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('settings') }}">
+            <div id="fan-curve-points">
+                <h3>Fan Curve Points (CPU Temp &rarr; Fan Speed %)</h3>
+                {% if fan_curve %}
+                    {% for point in fan_curve %}
+                    <div class="fan-point" id="point-{{ loop.index0 }}">
+                        <label for="temp_{{ loop.index0 }}">Temp (&ge; °C):</label>
+                        <input type="number" name="temp_{{ loop.index0 }}" value="{{ point.temp }}" min="0" max="100" required>
+                        <label for="speed_{{ loop.index0 }}">Speed (%):</label>
+                        <input type="number" name="speed_{{ loop.index0 }}" value="{{ point.speed }}" min="0" max="100" required>
+                        <button type="button" onclick="removePoint('point-{{ loop.index0 }}')">Remove</button>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="fan-point" id="point-0">
+                        <label for="temp_0">Temp (&ge; °C):</label>
+                        <input type="number" name="temp_0" value="50" min="0" max="100" required>
+                        <label for="speed_0">Speed (%):</label>
+                        <input type="number" name="speed_0" value="20" min="0" max="100" required>
+                        <button type="button" onclick="removePoint('point-0')">Remove</button>
+                    </div>
+                {% endif %}
+            </div>
+            <input type="hidden" name="num_fan_points" id="num_fan_points" value="{{ fan_curve|length if fan_curve else 1 }}">
+            <button type="button" onclick="addPoint()">Add Fan Curve Point</button>
+            <br><br>
+            <input type="submit" value="Save Settings">
+        </form>
+        
+        <script>
+            let pointCounter = {{ fan_curve|length if fan_curve else 1 }};
+
+            function addPoint() {
+                const container = document.getElementById('fan-curve-points');
+                const newPointDiv = document.createElement('div');
+                newPointDiv.classList.add('fan-point');
+                newPointDiv.id = `point-${pointCounter}`;
+                newPointDiv.innerHTML = `
+                    <label for="temp_${pointCounter}">Temp (&ge; °C):</label>
+                    <input type="number" name="temp_${pointCounter}" value="" min="0" max="100" required>
+                    <label for="speed_${pointCounter}">Speed (%):</label>
+                    <input type="number" name="speed_${pointCounter}" value="" min="0" max="100" required>
+                    <button type="button" onclick="removePoint('point-${pointCounter}')">Remove</button>
+                `;
+                container.appendChild(newPointDiv);
+                pointCounter++;
+                updateNumFanPoints();
+            }
+
+            function removePoint(pointId) {
+                const pointToRemove = document.getElementById(pointId);
+                if (pointToRemove) {
+                    pointToRemove.remove();
+                    // Renumbering is not strictly necessary if backend handles gaps, but good for consistency if needed.
+                    // For this form structure, we just need to make sure num_fan_points is accurate for the POST.
+                    // A simpler way is to just let the backend filter out empty submissions.
+                    // The current backend logic in web_server.py iterates based on num_fan_points, so if a point is removed,
+                    // its data won't be submitted if the indices are dense.
+                    // The provided web_server.py handles potentially sparse indices by checking `if temp_key in request.form`.
+                    // Let's ensure num_fan_points reflects the *potential* highest index.
+                    // A better way on remove is to re-evaluate the number of actual .fan-point divs
+                }
+                updateNumFanPoints(); // Or just ensure the backend robustly handles missing indexed fields
+            }
+            
+            function updateNumFanPoints() {
+                // This sends the highest potential index, backend needs to check if fields exist
+                document.getElementById('num_fan_points').value = pointCounter;
+                // More robust way: count actual .fan-point divs
+                // document.getElementById('num_fan_points').value = document.querySelectorAll('#fan-curve-points .fan-point').length;
+            }
+
+            // Initial call to set the counter correctly if editing an existing curve
+            document.addEventListener('DOMContentLoaded', function() {
+                 pointCounter = document.querySelectorAll('#fan-curve-points .fan-point').length;
+                 if (pointCounter === 0 && document.getElementById('fan-curve-points')) { // If no points, ensure pointCounter is ready for first add
+                    // If starting completely empty, addPoint might be called manually or the form starts with one empty row.
+                    // The current HTML ensures at least one row if fan_curve is empty.
+                 }
+                 updateNumFanPoints();
+            });
+        </script>
+
+        </div>
+</body>
+</html>

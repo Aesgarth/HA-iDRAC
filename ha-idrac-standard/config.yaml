@@ -1,0 +1,58 @@
+# HA-iDRAC/ha-idrac-standard/config.yaml
+
+name: "HA iDRAC Controller Standard"
+version: "0.2.0"
+slug: "ha_idrac_controller_standard"
+description: "Control Dell iDRAC fan speeds and monitor server health in Home Assistant. Multi-server, self-learning fan control, SNMP disk health."
+arch:
+  - "aarch64"
+  - "amd64"
+init: false
+boot: "auto"
+timeout: 60
+watchdog: "http://[HOST]:[PORT:8099]/health"
+
+ingress: true
+ingress_port: 8099
+ingress_entry: "/"
+panel_icon: "mdi:server-network"
+panel_title: "iDRAC Control"
+panel_admin: true
+
+options:
+  # Default Fan Control Logic (can be overridden per server)
+  base_fan_speed_percent: 20
+  low_temp_threshold: 45
+  high_temp_fan_speed_percent: 50
+  critical_temp_threshold: 65
+
+  # Polling and Logging
+  check_interval_seconds: 30
+  log_level: "info"
+
+  # MQTT Configuration (Global for now)
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+
+schema:
+  # Default Fan Control Logic
+  base_fan_speed_percent: "int(5,100)"
+  low_temp_threshold: "int(0,100)"
+  high_temp_fan_speed_percent: "int(5,100)"
+  critical_temp_threshold: "int(0,100)"
+
+  # Polling and Logging
+  check_interval_seconds: "int(5,)"
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+  # MQTT Configuration
+  mqtt_host: "str"
+  mqtt_port: "port"
+  mqtt_username: "str?"
+  mqtt_password: "password?"
+
+map:
+  - "data:rw"
+hassio_role: "default"

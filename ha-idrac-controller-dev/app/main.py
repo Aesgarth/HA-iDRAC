@@ -112,7 +112,8 @@ class ServerWorker:
             password=self.config['idrac_password'],
             log_level=self.log_level,
         )
-        self.mqtt = MqttClient(client_id=f"ha_idrac_{self.alias}")
+        prefix = os.getenv("ADDON_ID") or "ha_idrac"
+        self.mqtt = MqttClient(client_id=f"{prefix}_{self.alias}")
         pid_config = self.config.get('pid_config', {})
         target_temp = pid_config.get('target_temp')
         if target_temp is None or target_temp == "":

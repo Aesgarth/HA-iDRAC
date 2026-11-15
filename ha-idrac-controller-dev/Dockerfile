@@ -18,6 +18,8 @@ RUN apt-get update && \
 # Set the working directory
 WORKDIR /app
 
+ENV ADDON_ID=ha_idrac_dev
+
 # Copy requirements.txt first to leverage Docker's build cache
 COPY app/requirements.txt ./
 # Ensure pip is up-to-date, then install requirements

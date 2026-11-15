@@ -1,3 +1,7 @@
+## 0.1.0-dev.34 - 2026-11-15
+
+* Unique MQTT client ID per add-on
+
 ## 0.1.0-dev.33 - 2026-11-14
 
 * PSU: failed supply no longer treated as absent; README path fix

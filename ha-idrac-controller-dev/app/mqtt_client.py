@@ -1,13 +1,14 @@
 # HA-iDRAC/ha-idrac-controller-dev/app/mqtt_client.py
 import json
+import os
 import re
 
 import paho.mqtt.client as mqtt
 
 
 class MqttClient:
-    def __init__(self, client_id="ha_idrac_controller"):
-        self.client_id = client_id
+    def __init__(self, client_id=None):
+        self.client_id = client_id or os.getenv("ADDON_ID") or "ha_idrac_controller"
         self.client = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv311)
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self.broker_address = "core-mosquitto"

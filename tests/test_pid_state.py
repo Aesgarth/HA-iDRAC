@@ -13,10 +13,7 @@ for mod in ["flask", "markupsafe", "paho", "paho.mqtt", "paho.mqtt.client"]:
         if mod not in sys.modules:
             sys.modules[mod] = MagicMock()
 
-dev_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ha-idrac-controller-dev"))
-if dev_dir not in sys.path:
-    sys.path.insert(0, dev_dir)
-
+import conftest  # noqa: F401
 from app import main
 
 

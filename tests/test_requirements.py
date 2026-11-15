@@ -1,11 +1,11 @@
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from conftest import resolve_addon_path
 
 
 def test_requirements_lists_runtime_dependencies():
-    req_path = ROOT / "ha-idrac-controller-dev" / "app" / "requirements.txt"
+    req_path = resolve_addon_path("ha-idrac-controller-dev/app/requirements.txt")
     lines = [
         line.strip()
         for line in req_path.read_text(encoding="utf-8").splitlines()

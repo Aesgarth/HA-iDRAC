@@ -1,3 +1,7 @@
+## 0.1.0-dev.36 - 2026-11-16
+
+* PSU and fan redundancy sensors
+
 ## 0.1.0-dev.35 - 2026-11-16
 
 * PSU input voltage and current sensors

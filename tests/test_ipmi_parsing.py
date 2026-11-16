@@ -294,3 +294,36 @@ def test_psu_electrical_from_r720_fixture_and_edge_cases():
     # Empty / None input returns {}
     assert mgr.get_psu_electrical("") == {}
     assert mgr.get_psu_electrical(None) == {}
+
+
+def test_redundancy_from_r720_fixture_and_edge_cases():
+    import os
+    from pathlib import Path
+    import pytest
+    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
+        pytest.skip("get_redundancy is dev-only")
+
+    mgr = make_manager()
+    fixture = Path(__file__).parent / "fixtures" / "idrac7_r720_sdr_elist.txt"
+    sdr = fixture.read_text(encoding="utf-8")
+    assert mgr.get_redundancy(sdr) == {
+        "ps": {"reading": "Fully Redundant", "ok": True},
+        "fan": {"reading": "Fully Redundant", "ok": True},
+    }
+
+    sdr_lost = (
+        "PS Redundancy  | 74h | cr  | 7.1 | Redundancy Lost\n"
+        "Fan Redundancy | 75h | ok  | 7.1 | Non-redundant: Sufficient Resources\n"
+    )
+    assert mgr.get_redundancy(sdr_lost) == {
+        "ps": {"reading": "Redundancy Lost", "ok": False},
+        "fan": {"reading": "Non-redundant: Sufficient Resources", "ok": True},
+    }
+
+    sdr_disabled = (
+        "PS Redundancy  | 74h | ns  | 7.1 | Disabled\n"
+        "Redundancy     | 78h | ok  | 11.3 | Redundancy Lost\n"
+    )
+    assert mgr.get_redundancy(sdr_disabled) == {"ps": None, "fan": None}
+    assert mgr.get_redundancy("") == {"ps": None, "fan": None}
+    assert mgr.get_redundancy(None) == {"ps": None, "fan": None}

@@ -58,6 +58,12 @@ _PSU_ELECTRICAL_RE = re.compile(
     r"\s*10\.(?P=index)\s*\|\s*(?P<value>[-+]?\d+(?:\.\d+)?)\s*(?P<unit>Volts|Amps)\s*$",
     re.IGNORECASE,
 )
+_REDUNDANCY_RE = re.compile(
+    r"^(?P<kind>PS|Fan)\s+Redundancy\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|nc|u|na)\s*\|"
+    r"\s*7\.\d+\s*\|\s*(?P<reading>.*)$",
+    re.IGNORECASE,
+)
+_REDUNDANCY_PROBLEM_KEYWORDS = ("lost", "degraded", "insufficient")
 _CPU_NAME_RE = re.compile(r"(?:^|\b)CPU\s?\d", re.IGNORECASE)
 
 
@@ -498,6 +504,31 @@ class IPMIManager:
             return electrical
         except Exception:
             return {}
+
+    def get_redundancy(self, sdr_data):
+        """Return {"ps": {"reading": str, "ok": bool} | None, "fan": ...} from 7.x SDR lines."""
+        result = {"ps": None, "fan": None}
+        if not sdr_data or not isinstance(sdr_data, str):
+            return result
+        try:
+            for line in sdr_data.splitlines():
+                match = _REDUNDANCY_RE.match(line.strip())
+                if not match:
+                    continue
+                kind = match.group("kind").lower()
+                status = match.group("status").lower()
+                reading = match.group("reading").strip()
+                reading_lower = reading.lower()
+                if status in ("ns", "na") or not reading or reading_lower in ("disabled", "no reading"):
+                    result[kind] = None
+                    continue
+                is_problem = (status in ("cr", "nc", "u")) or any(
+                    kw in reading_lower for kw in _REDUNDANCY_PROBLEM_KEYWORDS
+                )
+                result[kind] = {"reading": reading, "ok": not is_problem}
+            return result
+        except Exception:
+            return {"ps": None, "fan": None}
 
     def chassis_shutdown(self):
         """Sends a graceful ACPI shutdown command to the server."""

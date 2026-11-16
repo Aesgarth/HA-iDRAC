@@ -155,6 +155,7 @@ For each enabled server (`<server>` is the sanitized server alias):
   * `binary_sensor.idrac_<server>_idrac_reachable` (`connectivity`) — `ON` when iDRAC responds to SDR reads, `OFF` after 3 consecutive failures.
   * `binary_sensor.idrac_<server>_fan_fault` (`problem`) — `ON` on fan fault, `OFF` when healthy. Attributes: `status` (e.g. `OK` or `Fan4: stopped`), `faulty_fans`, and per-fan RPM readings.
   * `binary_sensor.idrac_<server>_psu_<name>` (`problem`) — One per PSU; `ON` on power/presence fault.
+  * `binary_sensor.idrac_<server>_ps_redundancy`, `binary_sensor.idrac_<server>_fan_redundancy` (`problem`) — Power supply and fan redundancy status (created only if exposed by the server), with `reading` attribute.
 * **Temperature, Fan & Power Sensors:**
   * `sensor.idrac_<server>_hottest_cpu_temp` (°C), `sensor.idrac_<server>_cpu_<i>_temp` (°C)
   * `sensor.idrac_<server>_inlet_temp` (°C), `sensor.idrac_<server>_exhaust_temp` (°C)

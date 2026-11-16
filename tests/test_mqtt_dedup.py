@@ -174,3 +174,35 @@ def test_psu_electrical_mqtt_publish_and_disappear_goes_offline(tmp_path, monkey
     assert (f"{fake_mqtt.base_topic}/sensor/psu2_current/availability", "offline", True) in fake_mqtt.published
     assert (f"{fake_mqtt.base_topic}/sensor/psu1_voltage/availability", "online", True) in fake_mqtt.published
 
+
+def test_redundancy_mqtt_publish_and_disappear_goes_offline(tmp_path, monkeypatch):
+    import pytest
+    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
+        pytest.skip("Redundancy sensors are dev-only")
+
+    monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
+    monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
+    worker = main.ServerWorker({
+        "alias": "r720",
+        "idrac_ip": "10.0.0.10",
+        "idrac_username": "root",
+        "idrac_password": "pw",
+    }, {"log_level": "warning", "check_interval_seconds": 30})
+    fake_mqtt = FakeMqtt()
+    worker.mqtt = fake_mqtt
+
+    worker._publish_redundancy_mqtt({
+        "ps": {"reading": "Redundancy Lost", "ok": False},
+        "fan": {"reading": "Fully Redundant", "ok": True},
+    })
+    disc_slugs = [d[1] for d in fake_mqtt.discoveries]
+    assert "ps_redundancy" in disc_slugs
+    assert "fan_redundancy" in disc_slugs
+    assert ("binary_sensor", "ps_redundancy", "ON", {"reading": "Redundancy Lost"}, False) in fake_mqtt.states
+    assert ("binary_sensor", "fan_redundancy", "OFF", {"reading": "Fully Redundant"}, False) in fake_mqtt.states
+
+    fake_mqtt.published.clear()
+    worker._publish_redundancy_mqtt({"ps": None, "fan": {"reading": "Fully Redundant", "ok": True}})
+    assert (f"{fake_mqtt.base_topic}/binary_sensor/ps_redundancy/availability", "offline", True) in fake_mqtt.published
+    assert (f"{fake_mqtt.base_topic}/binary_sensor/fan_redundancy/availability", "online", True) in fake_mqtt.published
+

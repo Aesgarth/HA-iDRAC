@@ -168,6 +168,8 @@ class ServerWorker:
         self.discovered_components = {}
         self._discovered_psu_electrical = set()
         self._psu_electrical_absence_logged = False
+        self._discovered_redundancy = set()
+        self._redundancy_prev_ok = {"ps": True, "fan": True}
         self._next_mqtt_attempt = 0.0
         self._pcie_response_disabled = False
         self.alive = True
@@ -461,6 +463,16 @@ class ServerWorker:
         power = self.ipmi.parse_power_consumption(power_sdr_data)
         psu_statuses = self.ipmi.get_power_status(power_sdr_data)
         psu_electrical = self.ipmi.get_psu_electrical(power_sdr_data)
+        redundancy = self.ipmi.get_redundancy(power_sdr_data)
+        for key, label in (("ps", "PS redundancy"), ("fan", "Fan redundancy")):
+            item = redundancy.get(key)
+            if item is not None:
+                is_ok = item["ok"]
+                if not is_ok and self._redundancy_prev_ok.get(key, True):
+                    self._log("warning", f"{label} problem: {item['reading']}")
+                elif is_ok and not self._redundancy_prev_ok.get(key, True):
+                    self._log("info", f"{label} restored: {item['reading']}")
+                self._redundancy_prev_ok[key] = is_ok
 
         hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
         target_fan_speed = self._apply_fan_policy(hottest_cpu, temps, power)
@@ -483,6 +495,7 @@ class ServerWorker:
             "fans": fans,
             "psus": psu_statuses,
             "psu_electrical": psu_electrical,
+            "redundancy": redundancy,
             "pid_status": pid_status,
             "fan_ok": self._fan_fault_status.get("ok", True),
             "fan_status": self._fan_fault_description,
@@ -502,6 +515,7 @@ class ServerWorker:
                 "actual_fan_rpms": fans,
                 "psu_statuses": psu_statuses,
                 "psu_electrical": psu_electrical,
+                "redundancy": redundancy,
                 "pid_status": pid_status,
                 "disks": getattr(self, 'current_disks', []),
                 "disks_summary": getattr(self, 'current_disks_summary', None),
@@ -739,6 +753,7 @@ class ServerWorker:
                 self.mqtt.publish_state('binary_sensor', slug, state)
 
         self._publish_psu_electrical_mqtt(status.get("psu_electrical") or {})
+        self._publish_redundancy_mqtt(status.get("redundancy") or {})
         self._publish_fan_health_mqtt(status)
         if newly_discovered_fan:
             self._fan_republish_at = time.monotonic() + 3.0
@@ -781,6 +796,37 @@ class ServerWorker:
         for stale_slug in sorted(self._discovered_psu_electrical - active_slugs):
             avail_topic = f"{self.mqtt.base_topic}/sensor/{stale_slug}/availability"
             self.mqtt.publish(avail_topic, "offline", retain=True)
+
+    def _publish_redundancy_mqtt(self, redundancy):
+        if not self.mqtt.is_connected:
+            return
+        for key, slug, name in (
+            ("ps", "ps_redundancy", "PS redundancy"),
+            ("fan", "fan_redundancy", "Fan redundancy"),
+        ):
+            item = redundancy.get(key)
+            avail_topic = f"{self.mqtt.base_topic}/binary_sensor/{slug}/availability"
+            if item is not None:
+                if slug not in self.discovered_sensors:
+                    self.mqtt.publish_discovery(
+                        "binary_sensor",
+                        slug,
+                        name,
+                        device_class="problem",
+                        extra_avail_topic=avail_topic,
+                    )
+                    self.discovered_sensors.add(slug)
+                    self.discovered_components[slug] = "binary_sensor"
+                self._discovered_redundancy.add(slug)
+                self.mqtt.publish(avail_topic, "online", retain=True)
+                self.mqtt.publish_state(
+                    "binary_sensor",
+                    slug,
+                    "OFF" if item["ok"] else "ON",
+                    attributes={"reading": item["reading"]},
+                )
+            elif slug in self._discovered_redundancy:
+                self.mqtt.publish(avail_topic, "offline", retain=True)
 
     def cleanup(self):
         if self.disk_poller:

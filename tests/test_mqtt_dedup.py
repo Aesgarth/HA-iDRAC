@@ -138,3 +138,39 @@ def test_mqtt_client_id_comes_from_addon_id_env(tmp_path, monkeypatch):
     }, {"log_level": "warning", "check_interval_seconds": 30})
     assert worker.mqtt.client_id == "ha_idrac_standard_r720"
 
+
+def test_psu_electrical_mqtt_publish_and_disappear_goes_offline(tmp_path, monkeypatch):
+    import pytest
+    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
+        pytest.skip("PSU electrical sensors are dev-only")
+
+    monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
+    monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
+    worker = main.ServerWorker({
+        "alias": "r720",
+        "idrac_ip": "10.0.0.10",
+        "idrac_username": "root",
+        "idrac_password": "pw",
+    }, {"log_level": "warning", "check_interval_seconds": 30})
+    fake_mqtt = FakeMqtt()
+    worker.mqtt = fake_mqtt
+
+    worker._publish_psu_electrical_mqtt({
+        "PSU1": {"voltage": 242.0, "current": 0.8},
+        "PSU2": {"voltage": 244.0, "current": 0.2},
+    })
+    disc_slugs = [d[1] for d in fake_mqtt.discoveries]
+    assert "psu1_voltage" in disc_slugs
+    assert "psu1_current" in disc_slugs
+    assert "psu2_voltage" in disc_slugs
+    assert "psu2_current" in disc_slugs
+    assert ("sensor", "psu1_voltage", 242.0, None, False) in fake_mqtt.states
+    assert ("sensor", "psu1_current", 0.8, None, False) in fake_mqtt.states
+
+    # PSU2 disappears -> availability goes offline
+    fake_mqtt.published.clear()
+    worker._publish_psu_electrical_mqtt({"PSU1": {"voltage": 241.0, "current": 0.75}})
+    assert (f"{fake_mqtt.base_topic}/sensor/psu2_voltage/availability", "offline", True) in fake_mqtt.published
+    assert (f"{fake_mqtt.base_topic}/sensor/psu2_current/availability", "offline", True) in fake_mqtt.published
+    assert (f"{fake_mqtt.base_topic}/sensor/psu1_voltage/availability", "online", True) in fake_mqtt.published
+

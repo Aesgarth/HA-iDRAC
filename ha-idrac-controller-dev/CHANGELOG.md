@@ -1,3 +1,7 @@
+## 0.1.0-dev.35 - 2026-11-16
+
+* PSU input voltage and current sensors
+
 ## 0.1.0-dev.34 - 2026-11-15
 
 * Unique MQTT client ID per add-on

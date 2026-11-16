@@ -53,6 +53,11 @@ _PSU_FAULT_READING_KEYWORDS = (
     "configuration error",
     "input lost",
 )
+_PSU_ELECTRICAL_RE = re.compile(
+    r"^(?P<kind>Voltage|Current)\s+(?P<index>\d+)\s*\|\s*[0-9a-fA-F]+h\s*\|\s*(?P<status>ok|ns|nr|cr|nc|u)\s*\|"
+    r"\s*10\.(?P=index)\s*\|\s*(?P<value>[-+]?\d+(?:\.\d+)?)\s*(?P<unit>Volts|Amps)\s*$",
+    re.IGNORECASE,
+)
 _CPU_NAME_RE = re.compile(r"(?:^|\b)CPU\s?\d", re.IGNORECASE)
 
 
@@ -461,6 +466,38 @@ class IPMIManager:
             self._psu_absence_logged = True
 
         return final_status
+
+    def get_psu_electrical(self, sdr_data):
+        """Return {"PSU1": {"voltage": float, "current": float}, ...} for present PSUs."""
+        if not sdr_data or not isinstance(sdr_data, str):
+            return {}
+        try:
+            present_psus = {p["name"] for p in self.get_power_status(sdr_data)}
+            if not present_psus:
+                return {}
+
+            electrical = {}
+            for line in sdr_data.splitlines():
+                match = _PSU_ELECTRICAL_RE.match(line.strip())
+                if not match:
+                    continue
+                if match.group("status").lower() == "ns":
+                    continue
+                kind = match.group("kind").lower()
+                unit = match.group("unit").lower()
+                if (kind == "voltage" and unit != "volts") or (kind == "current" and unit != "amps"):
+                    continue
+                psu_name = f"PSU{match.group('index')}"
+                if psu_name not in present_psus:
+                    continue
+                try:
+                    val = float(match.group("value"))
+                except (TypeError, ValueError):
+                    continue
+                electrical.setdefault(psu_name, {})[kind] = val
+            return electrical
+        except Exception:
+            return {}
 
     def chassis_shutdown(self):
         """Sends a graceful ACPI shutdown command to the server."""

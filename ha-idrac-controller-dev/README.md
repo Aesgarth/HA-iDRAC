@@ -160,6 +160,8 @@ For each enabled server (`<server>` is the sanitized server alias):
   * `sensor.idrac_<server>_inlet_temp` (°C), `sensor.idrac_<server>_exhaust_temp` (°C)
   * `sensor.idrac_<server>_fan_<name>_rpm` (RPM) — One per detected tachometer.
   * `sensor.idrac_<server>_power` (W)
+  * `sensor.idrac_<server>_psu1_voltage`, `sensor.idrac_<server>_psu2_voltage` (V) — Per-PSU input voltage (created only if exposed by the server).
+  * `sensor.idrac_<server>_psu1_current`, `sensor.idrac_<server>_psu2_current` (A) — Per-PSU input current (created only if exposed by the server).
   * `sensor.idrac_<server>_target_fan_speed` (%)
 * **Disk Health Entities (when SNMP is enabled):**
   * `binary_sensor.idrac_<server>_disks_problem` (`problem`) — `ON` if any disk has a problem. Attributes: `summary` (`All N disks OK` or `<k> problem(s)`), `count`, `problem_count`, `problems` (plus `stale` and `last_success` when stale). Goes `unavailable` when stale and last known healthy.

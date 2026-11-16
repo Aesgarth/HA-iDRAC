@@ -252,3 +252,45 @@ def test_real_r720_fixture_parses_exactly_two_psus():
         {"name": "PSU1", "ok": True},
         {"name": "PSU2", "ok": True},
     ]
+
+
+def test_psu_electrical_from_r720_fixture_and_edge_cases():
+    import os
+    from pathlib import Path
+    import pytest
+    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
+        pytest.skip("get_psu_electrical is dev-only")
+
+    mgr = make_manager()
+    fixture = Path(__file__).parent / "fixtures" / "idrac7_r720_sdr_elist.txt"
+    sdr = fixture.read_text(encoding="utf-8")
+    assert mgr.get_psu_electrical(sdr) == {
+        "PSU1": {"voltage": 242.0, "current": 0.8},
+        "PSU2": {"voltage": 244.0, "current": 0.2},
+    }
+
+    # Empty bay omits that PSU
+    sdr_empty_bay = (
+        "Status           | 62h | ok  | 10.1 | Presence detected\n"
+        "Voltage 1        | 6Ch | ok  | 10.1 | 242 Volts\n"
+        "Current 1        | 6Ah | ok  | 10.1 | 0.80 Amps\n"
+        "Status           | 63h | ns  | 10.2 | Absent\n"
+        "Voltage 2        | 6Dh | ok  | 10.2 | 244 Volts\n"
+        "Current 2        | 6Bh | ok  | 10.2 | 0.20 Amps\n"
+    )
+    assert mgr.get_psu_electrical(sdr_empty_bay) == {
+        "PSU1": {"voltage": 242.0, "current": 0.8},
+    }
+
+    # "No Reading" and unrelated Voltage 3 | 4.x ignored
+    sdr_noise = (
+        "Status           | 62h | ok  | 10.1 | Presence detected\n"
+        "Voltage 1        | 6Ch | ok  | 10.1 | No Reading\n"
+        "Current 1        | 6Ah | ok  | 10.1 | 0.80 Amps\n"
+        "Voltage 3        | 6Eh | ok  |  4.1 | 12.0 Volts\n"
+    )
+    assert mgr.get_psu_electrical(sdr_noise) == {"PSU1": {"current": 0.8}}
+
+    # Empty / None input returns {}
+    assert mgr.get_psu_electrical("") == {}
+    assert mgr.get_psu_electrical(None) == {}

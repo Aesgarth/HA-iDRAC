@@ -166,6 +166,8 @@ class ServerWorker:
         self.server_info = {}
         self.discovered_sensors = set()
         self.discovered_components = {}
+        self._discovered_psu_electrical = set()
+        self._psu_electrical_absence_logged = False
         self._next_mqtt_attempt = 0.0
         self._pcie_response_disabled = False
         self.alive = True
@@ -458,6 +460,7 @@ class ServerWorker:
         power_sdr_data = self.ipmi.retrieve_power_sdr_raw()
         power = self.ipmi.parse_power_consumption(power_sdr_data)
         psu_statuses = self.ipmi.get_power_status(power_sdr_data)
+        psu_electrical = self.ipmi.get_psu_electrical(power_sdr_data)
 
         hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
         target_fan_speed = self._apply_fan_policy(hottest_cpu, temps, power)
@@ -479,6 +482,7 @@ class ServerWorker:
             "cpus": temps.get('cpu_temps', []),
             "fans": fans,
             "psus": psu_statuses,
+            "psu_electrical": psu_electrical,
             "pid_status": pid_status,
             "fan_ok": self._fan_fault_status.get("ok", True),
             "fan_status": self._fan_fault_description,
@@ -497,6 +501,7 @@ class ServerWorker:
                 "cpu_temps_c": temps.get('cpu_temps', []),
                 "actual_fan_rpms": fans,
                 "psu_statuses": psu_statuses,
+                "psu_electrical": psu_electrical,
                 "pid_status": pid_status,
                 "disks": getattr(self, 'current_disks', []),
                 "disks_summary": getattr(self, 'current_disks_summary', None),
@@ -733,9 +738,49 @@ class ServerWorker:
                 state = "ON" if psu_data and not psu_data['ok'] else "OFF"
                 self.mqtt.publish_state('binary_sensor', slug, state)
 
+        self._publish_psu_electrical_mqtt(status.get("psu_electrical") or {})
         self._publish_fan_health_mqtt(status)
         if newly_discovered_fan:
             self._fan_republish_at = time.monotonic() + 3.0
+
+    def _publish_psu_electrical_mqtt(self, psu_electrical):
+        if not self.mqtt.is_connected:
+            return
+        if not psu_electrical and not self._psu_electrical_absence_logged:
+            self._log("info", "No PSU electrical sensors (voltage/current) exposed by this iDRAC.")
+            self._psu_electrical_absence_logged = True
+
+        active_slugs = set()
+        for psu_name, readings in sorted(psu_electrical.items()):
+            psu_slug = re.sub(r'[^a-zA-Z0-9_]+', '', psu_name).lower()
+            for kind, device_class, unit in (
+                ("voltage", "voltage", "V"),
+                ("current", "current", "A"),
+            ):
+                if kind not in readings:
+                    continue
+                slug = f"{psu_slug}_{kind}"
+                active_slugs.add(slug)
+                avail_topic = f"{self.mqtt.base_topic}/sensor/{slug}/availability"
+                if slug not in self.discovered_sensors:
+                    self.mqtt.publish_discovery(
+                        "sensor",
+                        slug,
+                        f"{psu_name} {kind.title()}",
+                        device_class=device_class,
+                        unit=unit,
+                        state_class="measurement",
+                        extra_avail_topic=avail_topic,
+                    )
+                    self.discovered_sensors.add(slug)
+                    self.discovered_components[slug] = "sensor"
+                self._discovered_psu_electrical.add(slug)
+                self.mqtt.publish(avail_topic, "online", retain=True)
+                self.mqtt.publish_state("sensor", slug, readings[kind])
+
+        for stale_slug in sorted(self._discovered_psu_electrical - active_slugs):
+            avail_topic = f"{self.mqtt.base_topic}/sensor/{stale_slug}/availability"
+            self.mqtt.publish(avail_topic, "offline", retain=True)
 
     def cleanup(self):
         if self.disk_poller:

@@ -170,6 +170,8 @@ For each enabled server (`<server>` is the sanitized server alias):
   * `binary_sensor.idrac_<server>_disk_monitoring_failing` (`problem`, diagnostic) — `ON` when disk polling is stale or has 3+ consecutive failures, with `last_success`, `last_error`, and `consecutive_failures`.
   * `sensor.idrac_<server>_disks_last_checked` (`timestamp`, diagnostic) — UTC timestamp of the last successful SNMP poll.
 
+See [Automation examples](AUTOMATIONS.md) for ready-to-use Home Assistant notification and Energy dashboard examples.
+
 ---
 
 ## Disk Health Monitoring (SNMP)

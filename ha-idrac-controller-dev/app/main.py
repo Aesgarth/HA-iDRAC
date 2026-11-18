@@ -1,5 +1,6 @@
 # HA-iDRAC/ha-idrac-controller-dev/app/main.py
 import copy
+import datetime
 import json
 import logging
 import os
@@ -170,6 +171,9 @@ class ServerWorker:
         self._psu_electrical_absence_logged = False
         self._discovered_redundancy = set()
         self._redundancy_prev_ok = {"ps": True, "fan": True}
+        self._last_successful_poll_iso = None
+        self._last_successful_poll_pub_mono = None
+        self._had_poll_failure_since_publish = False
         self._next_mqtt_attempt = 0.0
         self._pcie_response_disabled = False
         self.alive = True
@@ -241,6 +245,23 @@ class ServerWorker:
         self.mqtt.subscribe(f"{self.mqtt.base_topic}/command/shutdown")
         self.discovered_sensors.clear()
         self._cleanup_deprecated_mqtt_entities()
+        if self._last_successful_poll_iso is not None:
+            self.mqtt.publish_discovery(
+                "sensor",
+                "last_successful_poll",
+                "Last successful poll",
+                device_class="timestamp",
+                entity_category="diagnostic",
+            )
+            self.discovered_sensors.add("last_successful_poll")
+            self.discovered_components["last_successful_poll"] = "sensor"
+            self.mqtt.publish_state(
+                "sensor",
+                "last_successful_poll",
+                self._last_successful_poll_iso,
+                retain=True,
+            )
+            self._last_successful_poll_pub_mono = time.monotonic()
         if self.disk_poller:
             self.disk_poller.republish_mqtt()
 
@@ -417,6 +438,7 @@ class ServerWorker:
     def _step_once_locked(self):
         raw_temp_data = self.ipmi.retrieve_temperatures_raw()
         if raw_temp_data is None:
+            self._had_poll_failure_since_publish = True
             self._consecutive_read_failures += 1
             if self._consecutive_read_failures >= 3:
                 if not self._idrac_unreachable:
@@ -455,6 +477,7 @@ class ServerWorker:
             self._publish_idrac_reachable(True)
 
         temps = self.ipmi.parse_temperatures(raw_temp_data)
+        self._last_successful_poll_iso = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         raw_fan_data = self.ipmi.retrieve_fan_rpms_raw()
         fans = self.ipmi.parse_fan_rpms(raw_fan_data)
         fan_readings = self.ipmi.parse_fan_readings(raw_fan_data)
@@ -496,6 +519,7 @@ class ServerWorker:
             "psus": psu_statuses,
             "psu_electrical": psu_electrical,
             "redundancy": redundancy,
+            "last_successful_poll": self._last_successful_poll_iso,
             "pid_status": pid_status,
             "fan_ok": self._fan_fault_status.get("ok", True),
             "fan_status": self._fan_fault_description,
@@ -709,6 +733,12 @@ class ServerWorker:
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
             "fan_fault": {"component": "binary_sensor", "name": "Fan fault", "device_class": "problem"},
             "idrac_reachable": {"component": "binary_sensor", "name": "iDRAC reachable", "device_class": "connectivity"},
+            "last_successful_poll": {
+                "component": "sensor",
+                "name": "Last successful poll",
+                "device_class": "timestamp",
+                "entity_category": "diagnostic",
+            },
         }
         for i, _ in enumerate(status.get('cpus', [])):
             sensors[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C", "state_class": "measurement"}
@@ -719,12 +749,14 @@ class ServerWorker:
 
         newly_discovered_fan = False
         for slug, desc in sensors.items():
-            if slug not in self.discovered_sensors:
+            newly_discovered = slug not in self.discovered_sensors
+            if newly_discovered:
                 cmd_topic = f"{self.mqtt.base_topic}/command/shutdown" if desc['component'] == 'button' else None
                 self.mqtt.publish_discovery(
                     desc['component'], slug, desc.get('name', slug.replace("_", " ").title()),
                     desc.get('device_class'), desc.get('unit'), desc.get('icon'),
                     cmd_topic, None, desc.get('state_class'),
+                    entity_category=desc.get('entity_category'),
                 )
                 self.discovered_sensors.add(slug)
                 self.discovered_components[slug] = desc['component']
@@ -735,6 +767,20 @@ class ServerWorker:
                 continue
             elif slug == "idrac_reachable":
                 self.mqtt.publish_state('binary_sensor', 'idrac_reachable', 'ON', retain=True)
+            elif slug == "last_successful_poll":
+                iso_val = status.get("last_successful_poll")
+                if iso_val is not None:
+                    now_mono = time.monotonic()
+                    should_publish = (
+                        newly_discovered
+                        or self._last_successful_poll_pub_mono is None
+                        or self._had_poll_failure_since_publish
+                        or (now_mono - self._last_successful_poll_pub_mono) >= 10.0
+                    )
+                    if should_publish:
+                        self.mqtt.publish_state('sensor', 'last_successful_poll', iso_val, retain=True)
+                        self._last_successful_poll_pub_mono = now_mono
+                        self._had_poll_failure_since_publish = False
             elif desc['component'] == 'sensor':
                 value = None
                 if slug.startswith('fan_'):

@@ -206,3 +206,79 @@ def test_redundancy_mqtt_publish_and_disappear_goes_offline(tmp_path, monkeypatc
     assert (f"{fake_mqtt.base_topic}/binary_sensor/ps_redundancy/availability", "offline", True) in fake_mqtt.published
     assert (f"{fake_mqtt.base_topic}/binary_sensor/fan_redundancy/availability", "online", True) in fake_mqtt.published
 
+
+def test_last_successful_poll_sensor_rate_limit_and_failure_recovery(tmp_path, monkeypatch):
+    import pytest
+    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
+        pytest.skip("Last successful poll sensor is dev-only")
+
+    monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
+    monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
+
+    mono_now = [1000.0]
+    monkeypatch.setattr(main.time, "monotonic", lambda: mono_now[0])
+
+    worker = main.ServerWorker({
+        "alias": "r720",
+        "idrac_ip": "10.0.0.10",
+        "idrac_username": "root",
+        "idrac_password": "pw",
+        "fan_mode": "simple",
+        "fan_control_enabled": False,
+        "poll_interval_seconds": 5,
+    }, {"log_level": "warning", "check_interval_seconds": 5})
+    fake_mqtt = FakeMqtt()
+    worker.mqtt = fake_mqtt
+
+    temp_fail = [False]
+    monkeypatch.setattr(
+        worker.ipmi,
+        "retrieve_temperatures_raw",
+        lambda: None if temp_fail[0] else "CPU1 Temp | 01h | ok | 3.1 | 40 degrees C",
+    )
+    monkeypatch.setattr(worker.ipmi, "retrieve_fan_rpms_raw", lambda: "Fan1A Tach | 30h | ok | 7.1 | 3000 RPM")
+    monkeypatch.setattr(worker.ipmi, "retrieve_power_sdr_raw", lambda: "")
+
+    # 1. First successful read: discovers with timestamp/diagnostic and publishes with retain=True
+    assert worker.step_once() is None
+    disc = [d for d in fake_mqtt.discoveries if d[1] == "last_successful_poll"]
+    assert len(disc) == 1
+    assert disc[0][0] == "sensor"
+    assert disc[0][3]["entity_category"] == "diagnostic"
+    poll_states = [s for s in fake_mqtt.states if s[1] == "last_successful_poll"]
+    assert len(poll_states) == 1
+    assert poll_states[0][4] is True
+    assert poll_states[0][2].endswith("+00:00")
+    first_iso = worker._last_successful_poll_iso
+
+    # 2. Poll 5s later (< 10s rate limit): _last_successful_poll_iso updates, MQTT publish is rate-limited
+    mono_now[0] += 5.0
+    fake_mqtt.states.clear()
+    assert worker.step_once() is None
+    assert [s for s in fake_mqtt.states if s[1] == "last_successful_poll"] == []
+
+    # 3. Poll 10s after first publish: MQTT publish occurs
+    mono_now[0] += 6.0
+    fake_mqtt.states.clear()
+    assert worker.step_once() is None
+    assert len([s for s in fake_mqtt.states if s[1] == "last_successful_poll"]) == 1
+
+    # 4. Failed read: does NOT update timestamp and does NOT mark entity unavailable
+    saved_iso = worker._last_successful_poll_iso
+    temp_fail[0] = True
+    mono_now[0] += 5.0
+    fake_mqtt.states.clear()
+    fake_mqtt.published.clear()
+    assert worker.step_once() == 60
+    assert worker._last_successful_poll_iso == saved_iso
+    assert [s for s in fake_mqtt.states if s[1] == "last_successful_poll"] == []
+    assert not any("last_successful_poll" in p[0] and p[1] == "offline" for p in fake_mqtt.published)
+
+    # 5. First success after failure publishes immediately even if < 10s since last publish
+    temp_fail[0] = False
+    mono_now[0] += 2.0
+    fake_mqtt.states.clear()
+    assert worker.step_once() is None
+    assert len([s for s in fake_mqtt.states if s[1] == "last_successful_poll"]) == 1
+    assert first_iso is not None
+

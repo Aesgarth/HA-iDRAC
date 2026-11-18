@@ -164,6 +164,7 @@ For each enabled server (`<server>` is the sanitized server alias):
   * `sensor.idrac_<server>_psu1_voltage`, `sensor.idrac_<server>_psu2_voltage` (V) — Per-PSU input voltage (created only if exposed by the server).
   * `sensor.idrac_<server>_psu1_current`, `sensor.idrac_<server>_psu2_current` (A) — Per-PSU input current (created only if exposed by the server).
   * `sensor.idrac_<server>_target_fan_speed` (%)
+  * `sensor.idrac_<server>_last_successful_poll` (`timestamp`, diagnostic) — UTC timestamp of the last successful iDRAC sensor read (keeps aging if iDRAC becomes unreachable).
 * **Disk Health Entities (when SNMP is enabled):**
   * `binary_sensor.idrac_<server>_disks_problem` (`problem`) — `ON` if any disk has a problem. Attributes: `summary` (`All N disks OK` or `<k> problem(s)`), `count`, `problem_count`, `problems` (plus `stale` and `last_success` when stale). Goes `unavailable` when stale and last known healthy.
   * `sensor.idrac_<server>_disk_<bay>_health` — Per-disk state (`OK`, `Warning`, `Predicted failure`, `Critical`, `Failed`, or `Offline`) with hardware attributes (`model`, `serial`, `firmware`, `size_gb`, `media_type`, `raid_state`, `component_status`, `smart_alert`, `manufactured`, `endurance_remaining`, `slot`).

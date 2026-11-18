@@ -1,3 +1,7 @@
+## 0.1.0-dev.37 - 2026-11-17
+
+* Last successful poll diagnostic sensor
+
 ## 0.1.0-dev.36 - 2026-11-16
 
 * PSU and fan redundancy sensors

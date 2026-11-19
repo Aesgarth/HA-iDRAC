@@ -140,10 +140,6 @@ def test_mqtt_client_id_comes_from_addon_id_env(tmp_path, monkeypatch):
 
 
 def test_psu_electrical_mqtt_publish_and_disappear_goes_offline(tmp_path, monkeypatch):
-    import pytest
-    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
-        pytest.skip("PSU electrical sensors are dev-only")
-
     monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
     monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
     worker = main.ServerWorker({
@@ -176,10 +172,6 @@ def test_psu_electrical_mqtt_publish_and_disappear_goes_offline(tmp_path, monkey
 
 
 def test_redundancy_mqtt_publish_and_disappear_goes_offline(tmp_path, monkeypatch):
-    import pytest
-    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
-        pytest.skip("Redundancy sensors are dev-only")
-
     monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
     monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
     worker = main.ServerWorker({
@@ -208,10 +200,6 @@ def test_redundancy_mqtt_publish_and_disappear_goes_offline(tmp_path, monkeypatc
 
 
 def test_last_successful_poll_sensor_rate_limit_and_failure_recovery(tmp_path, monkeypatch):
-    import pytest
-    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
-        pytest.skip("Last successful poll sensor is dev-only")
-
     monkeypatch.setattr(watchdog, "HEARTBEAT_FILE", str(tmp_path / "hb.json"))
     monkeypatch.setattr(main, "PID_STATE_FILE", str(tmp_path / "pid_state.json"))
 

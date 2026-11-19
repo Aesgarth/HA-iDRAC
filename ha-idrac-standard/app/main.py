@@ -1,5 +1,6 @@
 # HA-iDRAC/ha-idrac-standard/app/main.py
 import copy
+import datetime
 import json
 import logging
 import os
@@ -166,6 +167,13 @@ class ServerWorker:
         self.server_info = {}
         self.discovered_sensors = set()
         self.discovered_components = {}
+        self._discovered_psu_electrical = set()
+        self._psu_electrical_absence_logged = False
+        self._discovered_redundancy = set()
+        self._redundancy_prev_ok = {"ps": True, "fan": True}
+        self._last_successful_poll_iso = None
+        self._last_successful_poll_pub_mono = None
+        self._had_poll_failure_since_publish = False
         self._next_mqtt_attempt = 0.0
         self._pcie_response_disabled = False
         self.alive = True
@@ -237,6 +245,23 @@ class ServerWorker:
         self.mqtt.subscribe(f"{self.mqtt.base_topic}/command/shutdown")
         self.discovered_sensors.clear()
         self._cleanup_deprecated_mqtt_entities()
+        if self._last_successful_poll_iso is not None:
+            self.mqtt.publish_discovery(
+                "sensor",
+                "last_successful_poll",
+                "Last successful poll",
+                device_class="timestamp",
+                entity_category="diagnostic",
+            )
+            self.discovered_sensors.add("last_successful_poll")
+            self.discovered_components["last_successful_poll"] = "sensor"
+            self.mqtt.publish_state(
+                "sensor",
+                "last_successful_poll",
+                self._last_successful_poll_iso,
+                retain=True,
+            )
+            self._last_successful_poll_pub_mono = time.monotonic()
         if self.disk_poller:
             self.disk_poller.republish_mqtt()
 
@@ -413,6 +438,7 @@ class ServerWorker:
     def _step_once_locked(self):
         raw_temp_data = self.ipmi.retrieve_temperatures_raw()
         if raw_temp_data is None:
+            self._had_poll_failure_since_publish = True
             self._consecutive_read_failures += 1
             if self._consecutive_read_failures >= 3:
                 if not self._idrac_unreachable:
@@ -451,6 +477,7 @@ class ServerWorker:
             self._publish_idrac_reachable(True)
 
         temps = self.ipmi.parse_temperatures(raw_temp_data)
+        self._last_successful_poll_iso = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         raw_fan_data = self.ipmi.retrieve_fan_rpms_raw()
         fans = self.ipmi.parse_fan_rpms(raw_fan_data)
         fan_readings = self.ipmi.parse_fan_readings(raw_fan_data)
@@ -458,6 +485,17 @@ class ServerWorker:
         power_sdr_data = self.ipmi.retrieve_power_sdr_raw()
         power = self.ipmi.parse_power_consumption(power_sdr_data)
         psu_statuses = self.ipmi.get_power_status(power_sdr_data)
+        psu_electrical = self.ipmi.get_psu_electrical(power_sdr_data)
+        redundancy = self.ipmi.get_redundancy(power_sdr_data)
+        for key, label in (("ps", "PS redundancy"), ("fan", "Fan redundancy")):
+            item = redundancy.get(key)
+            if item is not None:
+                is_ok = item["ok"]
+                if not is_ok and self._redundancy_prev_ok.get(key, True):
+                    self._log("warning", f"{label} problem: {item['reading']}")
+                elif is_ok and not self._redundancy_prev_ok.get(key, True):
+                    self._log("info", f"{label} restored: {item['reading']}")
+                self._redundancy_prev_ok[key] = is_ok
 
         hottest_cpu = max(temps['cpu_temps']) if temps['cpu_temps'] else None
         target_fan_speed = self._apply_fan_policy(hottest_cpu, temps, power)
@@ -479,6 +517,9 @@ class ServerWorker:
             "cpus": temps.get('cpu_temps', []),
             "fans": fans,
             "psus": psu_statuses,
+            "psu_electrical": psu_electrical,
+            "redundancy": redundancy,
+            "last_successful_poll": self._last_successful_poll_iso,
             "pid_status": pid_status,
             "fan_ok": self._fan_fault_status.get("ok", True),
             "fan_status": self._fan_fault_description,
@@ -497,6 +538,8 @@ class ServerWorker:
                 "cpu_temps_c": temps.get('cpu_temps', []),
                 "actual_fan_rpms": fans,
                 "psu_statuses": psu_statuses,
+                "psu_electrical": psu_electrical,
+                "redundancy": redundancy,
                 "pid_status": pid_status,
                 "disks": getattr(self, 'current_disks', []),
                 "disks_summary": getattr(self, 'current_disks_summary', None),
@@ -690,6 +733,12 @@ class ServerWorker:
             "target_fan_speed": {"component": "sensor", "unit": "%", "icon": "mdi:fan-chevron-up"},
             "fan_fault": {"component": "binary_sensor", "name": "Fan fault", "device_class": "problem"},
             "idrac_reachable": {"component": "binary_sensor", "name": "iDRAC reachable", "device_class": "connectivity"},
+            "last_successful_poll": {
+                "component": "sensor",
+                "name": "Last successful poll",
+                "device_class": "timestamp",
+                "entity_category": "diagnostic",
+            },
         }
         for i, _ in enumerate(status.get('cpus', [])):
             sensors[f"cpu_{i}_temp"] = {"component": "sensor", "name": f"CPU {i} Temperature", "device_class": "temperature", "unit": "°C", "state_class": "measurement"}
@@ -700,12 +749,14 @@ class ServerWorker:
 
         newly_discovered_fan = False
         for slug, desc in sensors.items():
-            if slug not in self.discovered_sensors:
+            newly_discovered = slug not in self.discovered_sensors
+            if newly_discovered:
                 cmd_topic = f"{self.mqtt.base_topic}/command/shutdown" if desc['component'] == 'button' else None
                 self.mqtt.publish_discovery(
                     desc['component'], slug, desc.get('name', slug.replace("_", " ").title()),
                     desc.get('device_class'), desc.get('unit'), desc.get('icon'),
                     cmd_topic, None, desc.get('state_class'),
+                    entity_category=desc.get('entity_category'),
                 )
                 self.discovered_sensors.add(slug)
                 self.discovered_components[slug] = desc['component']
@@ -716,6 +767,20 @@ class ServerWorker:
                 continue
             elif slug == "idrac_reachable":
                 self.mqtt.publish_state('binary_sensor', 'idrac_reachable', 'ON', retain=True)
+            elif slug == "last_successful_poll":
+                iso_val = status.get("last_successful_poll")
+                if iso_val is not None:
+                    now_mono = time.monotonic()
+                    should_publish = (
+                        newly_discovered
+                        or self._last_successful_poll_pub_mono is None
+                        or self._had_poll_failure_since_publish
+                        or (now_mono - self._last_successful_poll_pub_mono) >= 10.0
+                    )
+                    if should_publish:
+                        self.mqtt.publish_state('sensor', 'last_successful_poll', iso_val, retain=True)
+                        self._last_successful_poll_pub_mono = now_mono
+                        self._had_poll_failure_since_publish = False
             elif desc['component'] == 'sensor':
                 value = None
                 if slug.startswith('fan_'):
@@ -733,9 +798,81 @@ class ServerWorker:
                 state = "ON" if psu_data and not psu_data['ok'] else "OFF"
                 self.mqtt.publish_state('binary_sensor', slug, state)
 
+        self._publish_psu_electrical_mqtt(status.get("psu_electrical") or {})
+        self._publish_redundancy_mqtt(status.get("redundancy") or {})
         self._publish_fan_health_mqtt(status)
         if newly_discovered_fan:
             self._fan_republish_at = time.monotonic() + 3.0
+
+    def _publish_psu_electrical_mqtt(self, psu_electrical):
+        if not self.mqtt.is_connected:
+            return
+        if not psu_electrical and not self._psu_electrical_absence_logged:
+            self._log("info", "No PSU electrical sensors (voltage/current) exposed by this iDRAC.")
+            self._psu_electrical_absence_logged = True
+
+        active_slugs = set()
+        for psu_name, readings in sorted(psu_electrical.items()):
+            psu_slug = re.sub(r'[^a-zA-Z0-9_]+', '', psu_name).lower()
+            for kind, device_class, unit in (
+                ("voltage", "voltage", "V"),
+                ("current", "current", "A"),
+            ):
+                if kind not in readings:
+                    continue
+                slug = f"{psu_slug}_{kind}"
+                active_slugs.add(slug)
+                avail_topic = f"{self.mqtt.base_topic}/sensor/{slug}/availability"
+                if slug not in self.discovered_sensors:
+                    self.mqtt.publish_discovery(
+                        "sensor",
+                        slug,
+                        f"{psu_name} {kind.title()}",
+                        device_class=device_class,
+                        unit=unit,
+                        state_class="measurement",
+                        extra_avail_topic=avail_topic,
+                    )
+                    self.discovered_sensors.add(slug)
+                    self.discovered_components[slug] = "sensor"
+                self._discovered_psu_electrical.add(slug)
+                self.mqtt.publish(avail_topic, "online", retain=True)
+                self.mqtt.publish_state("sensor", slug, readings[kind])
+
+        for stale_slug in sorted(self._discovered_psu_electrical - active_slugs):
+            avail_topic = f"{self.mqtt.base_topic}/sensor/{stale_slug}/availability"
+            self.mqtt.publish(avail_topic, "offline", retain=True)
+
+    def _publish_redundancy_mqtt(self, redundancy):
+        if not self.mqtt.is_connected:
+            return
+        for key, slug, name in (
+            ("ps", "ps_redundancy", "PS redundancy"),
+            ("fan", "fan_redundancy", "Fan redundancy"),
+        ):
+            item = redundancy.get(key)
+            avail_topic = f"{self.mqtt.base_topic}/binary_sensor/{slug}/availability"
+            if item is not None:
+                if slug not in self.discovered_sensors:
+                    self.mqtt.publish_discovery(
+                        "binary_sensor",
+                        slug,
+                        name,
+                        device_class="problem",
+                        extra_avail_topic=avail_topic,
+                    )
+                    self.discovered_sensors.add(slug)
+                    self.discovered_components[slug] = "binary_sensor"
+                self._discovered_redundancy.add(slug)
+                self.mqtt.publish(avail_topic, "online", retain=True)
+                self.mqtt.publish_state(
+                    "binary_sensor",
+                    slug,
+                    "OFF" if item["ok"] else "ON",
+                    attributes={"reading": item["reading"]},
+                )
+            elif slug in self._discovered_redundancy:
+                self.mqtt.publish(avail_topic, "offline", retain=True)
 
     def cleanup(self):
         if self.disk_poller:

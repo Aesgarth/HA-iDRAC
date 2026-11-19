@@ -155,12 +155,16 @@ For each enabled server (`<server>` is the sanitized server alias):
   * `binary_sensor.idrac_<server>_idrac_reachable` (`connectivity`) — `ON` when iDRAC responds to SDR reads, `OFF` after 3 consecutive failures.
   * `binary_sensor.idrac_<server>_fan_fault` (`problem`) — `ON` on fan fault, `OFF` when healthy. Attributes: `status` (e.g. `OK` or `Fan4: stopped`), `faulty_fans`, and per-fan RPM readings.
   * `binary_sensor.idrac_<server>_psu_<name>` (`problem`) — One per PSU; `ON` on power/presence fault.
+  * `binary_sensor.idrac_<server>_ps_redundancy`, `binary_sensor.idrac_<server>_fan_redundancy` (`problem`) — Power supply and fan redundancy status (created only if exposed by the server), with `reading` attribute.
 * **Temperature, Fan & Power Sensors:**
   * `sensor.idrac_<server>_hottest_cpu_temp` (°C), `sensor.idrac_<server>_cpu_<i>_temp` (°C)
   * `sensor.idrac_<server>_inlet_temp` (°C), `sensor.idrac_<server>_exhaust_temp` (°C)
   * `sensor.idrac_<server>_fan_<name>_rpm` (RPM) — One per detected tachometer.
   * `sensor.idrac_<server>_power` (W)
+  * `sensor.idrac_<server>_psu1_voltage`, `sensor.idrac_<server>_psu2_voltage` (V) — Per-PSU input voltage (created only if exposed by the server).
+  * `sensor.idrac_<server>_psu1_current`, `sensor.idrac_<server>_psu2_current` (A) — Per-PSU input current (created only if exposed by the server).
   * `sensor.idrac_<server>_target_fan_speed` (%)
+  * `sensor.idrac_<server>_last_successful_poll` (`timestamp`, diagnostic) — UTC timestamp of the last successful iDRAC sensor read (keeps aging if iDRAC becomes unreachable).
 * **Disk Health Entities (when SNMP is enabled):**
   * `binary_sensor.idrac_<server>_disks_problem` (`problem`) — `ON` if any disk has a problem. Attributes: `summary` (`All N disks OK` or `<k> problem(s)`), `count`, `problem_count`, `problems` (plus `stale` and `last_success` when stale). Goes `unavailable` when stale and last known healthy.
   * `sensor.idrac_<server>_disk_<bay>_health` — Per-disk state (`OK`, `Warning`, `Predicted failure`, `Critical`, `Failed`, or `Offline`) with hardware attributes (`model`, `serial`, `firmware`, `size_gb`, `media_type`, `raid_state`, `component_status`, `smart_alert`, `manufactured`, `endurance_remaining`, `slot`).

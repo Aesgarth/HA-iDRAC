@@ -255,11 +255,7 @@ def test_real_r720_fixture_parses_exactly_two_psus():
 
 
 def test_psu_electrical_from_r720_fixture_and_edge_cases():
-    import os
     from pathlib import Path
-    import pytest
-    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
-        pytest.skip("get_psu_electrical is dev-only")
 
     mgr = make_manager()
     fixture = Path(__file__).parent / "fixtures" / "idrac7_r720_sdr_elist.txt"
@@ -297,11 +293,7 @@ def test_psu_electrical_from_r720_fixture_and_edge_cases():
 
 
 def test_redundancy_from_r720_fixture_and_edge_cases():
-    import os
     from pathlib import Path
-    import pytest
-    if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
-        pytest.skip("get_redundancy is dev-only")
 
     mgr = make_manager()
     fixture = Path(__file__).parent / "fixtures" / "idrac7_r720_sdr_elist.txt"

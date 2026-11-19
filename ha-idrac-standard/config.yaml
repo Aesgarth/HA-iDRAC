@@ -1,7 +1,7 @@
 # HA-iDRAC/ha-idrac-standard/config.yaml
 
 name: "HA iDRAC Controller Standard"
-version: "0.2.0"
+version: "0.3.0"
 slug: "ha_idrac_controller_standard"
 description: "Control Dell iDRAC fan speeds and monitor server health in Home Assistant. Multi-server, self-learning fan control, SNMP disk health."
 arch:

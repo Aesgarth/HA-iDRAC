@@ -1,4 +1,17 @@
-# Home Assistant iDRAC Controller Add-on
+# Home Assistant iDRAC Controller Add-on (v0.1.2)
+
+> **Legacy Add-on Notice:** This is the original single-server add-on (`0.1.2`) with simple 3-tier fan control. It does **not** include the self-learning Target Temperature controller, fan failure detection, SNMP disk health monitoring, live Web UI settings, or the recent 12G/13G sensor and safety fixes found in **HA iDRAC Controller Standard**. New users should install **HA iDRAC Controller Standard** instead.
+
+## Known Limitations (Verified from Code)
+
+* **Single server only:** Monitors and controls a single iDRAC configured on the Home Assistant add-on **Configuration** tab (`IDRAC_IP`, `IDRAC_USERNAME`, `IDRAC_PASSWORD`).
+* **Simple 3-tier thresholds only (no hysteresis or curve control):** `main.py` applies `base_fan_speed_percent`, `high_temp_fan_speed_percent`, or Dell Auto at `low_temp_threshold` and `critical_temp_threshold` without a hysteresis band. Although the Web UI includes an "Advanced Fan Curve" page that saves `/data/app_config.json`, `main_control_loop` never uses that curve to calculate fan speeds.
+* **12G-only CPU sensor matching & unanchored inlet pattern:** `main.py` hardcodes `cpu_generic_temp_pattern = r"^Temp$"`, which matches 12G (iDRAC 7) CPU sensors literally named `Temp` but does not match 13G (iDRAC 8) CPU sensors named `CPU1 Temp` / `CPU2 Temp` (leaving 13G servers in `"Dell Auto (Safety)"`). Inlet matching uses an unanchored `r"Inlet Temp"` regex, which can match `PSU1 Inlet Temp` if it appears before the chassis `Inlet Temp`.
+* **Shutdown behavior:** `run.sh` runs `exec python3 -m app.main`. On `SIGTERM`/`SIGINT`, `graceful_shutdown` sets `running = False`; when the loop finishes its current cycle or `0.1 s` sleep step, the `finally:` block calls `ipmi_manager.apply_dell_fan_control_profile()` (`raw 0x30 0x30 0x01 0x01`, single attempt with no retry) and disconnects MQTT. There is no separate watchdog process, no unreachable-iDRAC retry loop, and if the manual-mode command (`0x30 0x30 0x01 0x00`) succeeds but the speed command (`0x30 0x30 0x02 0xff <hex>`) fails, it logs an error without reverting to Dell auto.
+* **No PSU or disk health monitoring:** `ipmi_manager.py` only queries `sdr type temperature`, `sdr type fan`, and `sdr type current` (for `Pwr Consumption ... Watts`). It does not create PSU status/electrical/redundancy entities or poll SNMP disk health.
+* **Password passed on `ipmitool` command line:** `ipmi_manager.py` passes `-P <password>` in process arguments rather than `-E` via environment variable, and `decimal_to_hex_for_ipmi` allows `0%` (`0x00`) rather than enforcing a `5%` floor.
+
+---
 
 **Control your Dell PowerEdge server's fan speeds based on CPU temperature and monitor key server metrics directly from Home Assistant.**
 

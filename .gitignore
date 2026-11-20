@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 .tmp/
+ha-idrac-*/data/
+*/data/servers_config.json
+*/data/pid_states.json

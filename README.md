@@ -55,7 +55,7 @@ control and hardware monitoring.
 |---|---|---|---|---|
 | [**HA iDRAC Controller Standard**](ha-idrac-standard/README.md) (`ha_idrac_controller_standard`, `0.3.0`) | Recommended for everyday use | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Fan failure detection, SNMP disk health, watchdog, live UI settings |
 | [**HA iDRAC Controller BETA**](ha-idrac-controller-dev/README.md) (`ha_idrac_controller_development`) | Testing new features | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Same as Standard, receives changes first |
-| [**HA iDRAC Controller**](ha-idrac-controller/README.md) (`ha_idrac_controller`, `0.1.2`) | Legacy / under review | Single server | Simple 3-tier with hysteresis | No self-learning, no disk monitoring, has not received recent sensor fixes |
+| [**HA iDRAC Controller**](ha-idrac-controller/README.md) (`ha_idrac_controller`, `0.1.2`) | Legacy / under review | Single server | Simple 3-tier thresholds | No self-learning, no disk monitoring, has not received recent sensor fixes |
 
 ### Which one should I use?
 
@@ -76,13 +76,13 @@ Use **HA iDRAC Controller Standard** for normal use. Only install **HA iDRAC Con
    https://github.com/Aesgarth/HA-iDRAC
    ```
 
-4. Install **HA iDRAC Controller BETA** for a T430.
+4. Install **HA iDRAC Controller Standard** (`ha_idrac_controller_standard`).
 5. Enable **IPMI over LAN** on the iDRAC (iDRAC Settings → Network →
    IPMI Settings), set the privilege limit to Administrator, and make sure HA
    can reach UDP 623 on the iDRAC.
 6. Start Mosquitto (or another MQTT broker) **before** starting the add-on,
    fill in the MQTT settings, save, start the add-on, then add the server in
-   the web UI (Manage Servers) and restart the add-on once.
+   the web UI (Manage Servers). Web UI settings apply live without restarting.
 
 The repository previously defined a third add-on, `multi-server`, which was
 an older snapshot of the BETA code and has been removed. If you were using

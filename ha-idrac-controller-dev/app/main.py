@@ -87,6 +87,50 @@ def delete_pid_state(alias, filepath=None):
             os.replace(temp_file, target)
 
 
+def load_all_pid_states(filepath=None):
+    target = filepath or PID_STATE_FILE
+    with pid_state_lock:
+        if not os.path.exists(target):
+            return {}
+        try:
+            with open(target, 'r') as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except (IOError, json.JSONDecodeError):
+            return {}
+
+
+def validate_pid_state(state):
+    if not isinstance(state, dict) or "theta" not in state or "cov" not in state:
+        return None
+    try:
+        if not isinstance(state["theta"], (list, tuple)) or len(state["theta"]) != 2:
+            return None
+        if not isinstance(state["cov"], (list, tuple)) or len(state["cov"]) != 2:
+            return None
+        theta = [float(state["theta"][0]), float(state["theta"][1])]
+        cov = [[float(v) for v in row] for row in state["cov"]]
+        if any(len(r) != 2 for r in cov):
+            return None
+        if not (0.0 <= theta[0] <= 0.5 and 0.002 <= theta[1] <= 0.3):
+            return None
+        raw_pf = state.get("power_floor")
+        if raw_pf is not None:
+            if not isinstance(raw_pf, dict):
+                return None
+            for key, value in raw_pf.items():
+                if not isinstance(value, (list, tuple)) or len(value) != 2:
+                    return None
+                int(key)
+                float(value[0])
+                int(value[1])
+        probe = AdaptiveFanController(50)
+        probe.load_state(state)
+        return probe.get_state()
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
 # --- Graceful Shutdown ---
 def graceful_shutdown(signum, frame):
     global running
@@ -146,6 +190,9 @@ class ServerWorker:
             slew_down_per_min=float(ramp_down),
             critical_temp=critical_temp,
         )
+        saved_states = load_all_pid_states()
+        if self.alias in saved_states:
+            self.pid.load_state(saved_states[self.alias])
         self.fan_state = SimpleFanState()
         self._cycle_lock = threading.Lock()
         self.in_manual_control = False
@@ -1046,17 +1093,28 @@ class ServerManager:
         update_watchdog_heartbeat(self.workers)
         return pid_state
 
-    def add_server(self, settings):
-        self.validate_settings(settings)
+    def add_server(self, settings, pid_state=None):
+        clean_settings = copy.deepcopy(settings)
+        embedded_pid = clean_settings.pop("pid_state", None)
+        if pid_state is None:
+            pid_state = embedded_pid
+        self.validate_settings(clean_settings)
+        valid_pid_state = None
+        if pid_state is not None:
+            valid_pid_state = validate_pid_state(pid_state)
+            if valid_pid_state is None:
+                print(f"[WARNING] [{clean_settings['alias']}] Discarded invalid pid_state during add/import.", flush=True)
         with self._manager_lock:
             configs = self._load_configs()
-            if any(s["alias"] == settings["alias"] for s in configs):
-                raise ValueError(f"Server alias '{settings['alias']}' already exists.")
-            saved = copy.deepcopy(settings)
+            if any(s["alias"] == clean_settings["alias"] for s in configs):
+                raise ValueError(f"Server alias '{clean_settings['alias']}' already exists.")
+            saved = copy.deepcopy(clean_settings)
             configs.append(saved)
             self._save_configs(configs)
+            if valid_pid_state is not None:
+                save_pid_state(saved["alias"], valid_pid_state)
             if saved.get("enabled", True):
-                self._start_worker_locked(copy.deepcopy(saved))
+                self._start_worker_locked(copy.deepcopy(saved), pid_state=valid_pid_state)
                 update_watchdog_heartbeat(self.workers)
 
     def remove_server(self, server_id):

@@ -186,6 +186,30 @@
                 </form>
             </details>
         </div>
+
+        <div class="card">
+            <h2>Export &amp; Import Settings</h2>
+            <p>Download server configurations (passwords and SNMP community strings are never exported) or import a
+                previously exported file. Imported servers start disabled with a blank password.</p>
+            <div class="form-grid">
+                <form action="servers/export" method="GET" class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer;">
+                        <input type="checkbox" name="include_learned" value="true" style="width: auto;">
+                        Include learned fan model
+                    </label>
+                    <div style="margin-top: 0.5em;">
+                        <button type="submit">Export settings</button>
+                    </div>
+                </form>
+                <form action="servers/import" method="POST" enctype="multipart/form-data" class="form-group">
+                    <label for="import_file">Import settings (.json, max 1 MB)</label>
+                    <input type="file" id="import_file" name="file" accept=".json,application/json" required>
+                    <div style="margin-top: 0.5em;">
+                        <button type="submit">Import settings</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
     <style>
         .form-grid {

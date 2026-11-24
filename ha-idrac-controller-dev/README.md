@@ -90,6 +90,14 @@ Target Temperature mode learns how much cooling your specific server needs inste
 * **Dashboard:** Shows a live auto-refreshing overview of temperatures, fan RPMs, power draw, PSU statuses, fan health, PID status, and physical disks for every enabled server.
 * **Manage Servers:** Add, edit, or delete servers, switch fan control modes, and test SNMP disk polling without restarting the add-on.
 
+### Export and Import Settings
+
+On the **Manage Servers** page, you can download your server configurations to `ha-idrac-servers.json` (**Export settings**) and upload them into another add-on instance or after a reinstall (**Import settings**):
+
+* **Secrets are never exported:** iDRAC passwords and SNMP community strings are stripped and replaced with `null` in the exported file.
+* **Optional learned fan model:** Check **Include learned fan model** before exporting to include each server's learned PID state (`pid_state`).
+* **Safe import:** Imported servers are added live with `enabled: false` and a blank password (existing server aliases are skipped rather than overwritten). Open each imported server, enter its iDRAC password (and SNMP community string if used), and enable it to start fan control.
+
 ---
 
 ## Safety and Limits

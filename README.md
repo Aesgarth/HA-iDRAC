@@ -53,11 +53,11 @@ control and hardware monitoring.
 
 | Name | For whom | Servers | Fan control | Extras |
 |---|---|---|---|---|
-| [**HA iDRAC Controller Standard**](ha-idrac-standard/README.md) (`ha_idrac_controller_standard`, `0.3.0`) | Recommended for everyday use | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Fan failure detection, SNMP disk health, watchdog, live UI settings |
+| [**HA iDRAC Controller Standard**](ha-idrac-standard/README.md) (`ha_idrac_controller_standard`, `0.3.1`) | Recommended for everyday use | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Fan failure detection, SNMP disk health, watchdog, live UI settings |
 | [**HA iDRAC Controller BETA**](ha-idrac-controller-dev/README.md) (`ha_idrac_controller_development`) | Testing new features | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Same as Standard, receives changes first |
 | [**HA iDRAC Controller**](ha-idrac-controller/README.md) (`ha_idrac_controller`, `0.1.2`) | Legacy / under review | Single server | Simple 3-tier thresholds | No self-learning, no disk monitoring, has not received recent sensor fixes |
 
-![Add-on status page showing temperatures, power and fan speeds](images/status-page.png)
+![Example Home Assistant dashboard for a server, with temperature gauges, status tiles and 24-hour history graphs](images/dashboard.jpg)
 
 ### Which one should I use?
 

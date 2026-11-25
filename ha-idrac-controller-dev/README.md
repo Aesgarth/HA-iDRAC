@@ -26,6 +26,12 @@
 
 ## Screenshots
 
+![Example Home Assistant dashboard for a server, with temperature gauges, status tiles and 24-hour history graphs](../images/dashboard.jpg)
+*Example Home Assistant dashboard built from the add-on's MQTT entities.*
+
+![Add-on status page with temperatures, fan speeds and physical disk health](../images/monitor.jpg)
+*Add-on status page showing temperatures, fan RPMs, and physical disk health.*
+
 ![Add-on status page showing temperatures, power and fan speeds](../images/status-page.png)
 *Live status dashboard showing server temperatures, power consumption, target fan speed, and individual fan RPMs.*
 
@@ -188,6 +194,13 @@ For each enabled server (`<server>` is the sanitized server alias):
   * `sensor.idrac_<server>_disks_last_checked` (`timestamp`, diagnostic) — UTC timestamp of the last successful SNMP poll.
 
 See [Automation examples](AUTOMATIONS.md) for ready-to-use Home Assistant notification and Energy dashboard examples.
+
+## Home Assistant Dashboard
+
+The Home Assistant dashboard shown in the screenshot is built directly from the MQTT entities published by the add-on:
+* **Status & Hardware Health:** At-a-glance status tiles for iDRAC connectivity, fan health, physical disk health, power draw, target fan speed, and PSU/redundancy status.
+* **Temperatures:** Real-time gauges for Hottest CPU, Inlet, and Exhaust temperatures alongside a 24-hour temperature history graph.
+* **Cooling and Power:** 24-hour history graphs comparing target fan speed (%) and server power consumption (W).
 
 ---
 

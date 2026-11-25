@@ -57,6 +57,8 @@ control and hardware monitoring.
 | [**HA iDRAC Controller BETA**](ha-idrac-controller-dev/README.md) (`ha_idrac_controller_development`) | Testing new features | Multi-server | Simple, Multi-Point Curve, Self-learning Target Temperature | Same as Standard, receives changes first |
 | [**HA iDRAC Controller**](ha-idrac-controller/README.md) (`ha_idrac_controller`, `0.1.2`) | Legacy / under review | Single server | Simple 3-tier thresholds | No self-learning, no disk monitoring, has not received recent sensor fixes |
 
+![Add-on status page showing temperatures, power and fan speeds](images/status-page.png)
+
 ### Which one should I use?
 
 Use **HA iDRAC Controller Standard** for normal use. Only install **HA iDRAC Controller BETA** if you want to test upcoming changes before they land in Standard. **Never run two add-ons against the same iDRAC server at the same time**, as both will send competing IPMI fan commands.

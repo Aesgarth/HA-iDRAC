@@ -1,6 +1,7 @@
 ## 0.1.0-dev.39 - 2026-11-24
 
 * Server config export and import (without secrets)
+* Add screenshots to documentation
 
 ## 0.1.0-dev.38 - 2026-11-20
 

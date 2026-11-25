@@ -24,6 +24,14 @@
 * **Live Settings & Production Web Server:** All per-server UI changes validate, save atomically, and take effect immediately without restarting the add-on. Served via `waitress` with quiet access logging.
 * **MQTT Auto-Discovery & Diagnostics:** Publishes Home Assistant entities with `sw_version` (iDRAC firmware) and `serial_number` (service tag), plus a **Shutdown Server** button.
 
+## Screenshots
+
+![Add-on status page showing temperatures, power and fan speeds](../images/status-page.png)
+*Live status dashboard showing server temperatures, power consumption, target fan speed, and individual fan RPMs.*
+
+![Manage Servers page with export and import settings](../images/manage-servers.png)
+*Manage Servers page with per-server controls and settings export/import.*
+
 ## What's New
 
 * **Self-learning Target Temperature controller (PID v3):** Time-based smoothing, scaled emergency rule, learned fan-power compensation, and configurable ramp-down rate.

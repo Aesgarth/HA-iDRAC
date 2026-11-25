@@ -9,6 +9,7 @@ import signal
 import tempfile
 import threading
 import time
+import traceback
 
 from .fan_logic import SimpleFanState, clamp_speed, validate_fan_config
 from .fan_health import FanMonitor
@@ -231,6 +232,7 @@ class ServerWorker:
             self.config.get('high_temp_fan_speed_percent', 50),
         )
         self.disk_poller = None
+        self._disk_poller_start_error = None
         self._last_disk_republish_time = 0.0
         self.current_disks = []
         self.current_disks_summary = None
@@ -384,19 +386,14 @@ class ServerWorker:
             self._log("warning", "No MQTT broker configured; Home Assistant entities will not be published.")
 
         if self.config.get("snmp_enabled", False):
-            community = self.config.get("snmp_community", "")
-            port = self.config.get("snmp_port", 161)
-            poll_mins = self.config.get("disk_poll_minutes", 10)
-            self.disk_poller = DiskHealthPoller(
-                host=self.config.get("idrac_ip"),
-                community=community,
-                port=port,
-                poll_minutes=poll_mins,
-                mqtt_client=self.mqtt,
-                log_fn=self._log,
-                on_update_fn=self._on_disks_updated,
-            )
-            self.disk_poller.start()
+            if self.disk_poller is None:
+                try:
+                    self.disk_poller = self.build_disk_poller(self.config, start=True)
+                except Exception as exc:
+                    self._log("error", f"Failed to start disk health poller:\n{traceback.format_exc()}")
+                    self._disk_poller_start_error = (
+                        f"SNMP settings saved but disk monitoring could not start: {exc}"
+                    )
         else:
             def _probe():
                 try:
@@ -414,6 +411,31 @@ class ServerWorker:
             threading.Thread(target=_probe, daemon=True).start()
 
         return True
+
+    def build_disk_poller(self, config=None, start=False):
+        """Construct (and optionally start) a DiskHealthPoller from server config, or return None."""
+        cfg = self.config if config is None else config
+        if not cfg.get("snmp_enabled", False):
+            return None
+        community = (cfg.get("snmp_community") or "").strip()
+        if not community:
+            self._log(
+                "warning",
+                "Disk health monitoring is enabled, but the SNMP community string is blank; not starting poller.",
+            )
+            return None
+        poller = DiskHealthPoller(
+            host=cfg["idrac_ip"],
+            community=community,
+            port=int(cfg.get("snmp_port", 161)),
+            poll_minutes=int(cfg.get("disk_poll_minutes", 10)),
+            mqtt_client=self.mqtt,
+            log_fn=self._log,
+            on_update_fn=self._on_disks_updated,
+        )
+        if start:
+            poller.start()
+        return poller
 
     def run(self):
         try:
@@ -1061,6 +1083,14 @@ class ServerManager:
         worker = ServerWorker(server_conf, self.global_opts)
         if pid_state:
             worker.pid.load_state(pid_state)
+        if server_conf.get("snmp_enabled", False):
+            try:
+                worker.disk_poller = worker.build_disk_poller(server_conf, start=True)
+            except Exception as exc:
+                worker._log("error", f"Failed to start disk health poller:\n{traceback.format_exc()}")
+                worker._disk_poller_start_error = (
+                    f"SNMP settings saved but disk monitoring could not start: {exc}"
+                )
         self.workers.append(worker)
         thread = threading.Thread(target=worker.run, daemon=True)
         self.threads.append(thread)
@@ -1075,6 +1105,10 @@ class ServerManager:
         pid_state = worker.pid.get_state()
         thread = self._worker_threads.pop(server_id, None)
         worker.stop()
+        if worker.disk_poller:
+            worker.disk_poller.stop()
+            worker.disk_poller.join(timeout=3.0)
+            worker.disk_poller = None
         if thread and thread.is_alive():
             thread.join(timeout=timeout)
         # Ensure Dell auto hand-back even if worker was never started in a thread
@@ -1114,8 +1148,10 @@ class ServerManager:
             if valid_pid_state is not None:
                 save_pid_state(saved["alias"], valid_pid_state)
             if saved.get("enabled", True):
-                self._start_worker_locked(copy.deepcopy(saved), pid_state=valid_pid_state)
+                worker = self._start_worker_locked(copy.deepcopy(saved), pid_state=valid_pid_state)
                 update_watchdog_heartbeat(self.workers)
+                return worker._disk_poller_start_error
+            return None
 
     def remove_server(self, server_id):
         with self._manager_lock:
@@ -1176,19 +1212,20 @@ class ServerManager:
             if not enabled:
                 if worker:
                     self._stop_worker_locked(server_id, remove_discovery=False)
-                return
+                return None
 
             if worker is None:
-                self._start_worker_locked(copy.deepcopy(saved))
+                new_worker = self._start_worker_locked(copy.deepcopy(saved))
                 update_watchdog_heartbeat(self.workers)
-                return
+                return new_worker._disk_poller_start_error
 
             if conn_changed:
                 pid_state = self._stop_worker_locked(server_id, remove_discovery=False)
-                self._start_worker_locked(copy.deepcopy(saved), pid_state=pid_state)
+                new_worker = self._start_worker_locked(copy.deepcopy(saved), pid_state=pid_state)
                 update_watchdog_heartbeat(self.workers)
-                return
+                return new_worker._disk_poller_start_error
 
+            poller_warning = None
             with worker._cycle_lock:
                 worker.config = copy.deepcopy(saved)
                 worker.min_safe_fan_speed = max(5, min(100, int(saved.get("min_safe_fan_speed", 20))))
@@ -1251,26 +1288,23 @@ class ServerManager:
                     or old_settings.get("snmp_community") != saved.get("snmp_community")
                     or old_settings.get("snmp_port") != saved.get("snmp_port")
                     or old_settings.get("disk_poll_minutes") != saved.get("disk_poll_minutes")
+                    or (bool(saved.get("snmp_enabled", False)) != (worker.disk_poller is not None))
                 )
                 if snmp_changed:
                     if worker.disk_poller:
                         worker.disk_poller.stop()
                         worker.disk_poller.join(timeout=3.0)
                         worker.disk_poller = None
-                    if saved.get("snmp_enabled", False) and saved.get("snmp_community"):
-                        worker.disk_poller = DiskHealthPoller(
-                            server_alias=worker.alias,
-                            ip=saved["idrac_ip"],
-                            community=saved["snmp_community"],
-                            port=int(saved.get("snmp_port", 161)),
-                            poll_minutes=int(saved.get("disk_poll_minutes", 10)),
-                            mqtt_client=worker.mqtt,
-                            log_fn=worker._log,
-                            on_update_fn=worker._on_disks_updated,
+                    try:
+                        worker.disk_poller = worker.build_disk_poller(saved, start=True)
+                    except Exception as exc:
+                        worker._log("error", f"Failed to start disk health poller:\n{traceback.format_exc()}")
+                        poller_warning = (
+                            f"SNMP settings saved but disk monitoring could not start: {exc}"
                         )
-                        worker.disk_poller.start()
 
             update_watchdog_heartbeat(self.workers)
+            return poller_warning
 
 
 # --- Main Execution ---

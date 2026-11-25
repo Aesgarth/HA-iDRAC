@@ -1,3 +1,7 @@
+## 0.3.1 - 2026-11-25
+
+* Fix disk monitoring not starting after saving SNMP settings in the UI
+
 ## 0.3.0 - 2026-11-19
 
 * PSU input voltage and current sensors

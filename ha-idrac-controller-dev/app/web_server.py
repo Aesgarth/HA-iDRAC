@@ -363,8 +363,11 @@ def add_server():
 
     if server_manager is not None:
         try:
-            server_manager.add_server(new_server)
-            flash("Saved and applied.", "success")
+            warn_msg = server_manager.add_server(new_server)
+            if warn_msg:
+                flash(warn_msg, "error")
+            else:
+                flash("Saved and applied.", "success")
         except ValueError as e:
             flash(str(e), "error")
         return redirect('../servers')
@@ -470,8 +473,11 @@ def update_server(alias):
 
     if server_manager is not None:
         try:
-            server_manager.apply_settings(alias, server_to_update)
-            flash("Saved and applied.", "success")
+            warn_msg = server_manager.apply_settings(alias, server_to_update)
+            if warn_msg:
+                flash(warn_msg, "error")
+            else:
+                flash("Saved and applied.", "success")
         except ValueError as e:
             flash(str(e), "error")
         return redirect('../../servers')

@@ -1,12 +1,8 @@
 import io
 import json
-import os
 import pytest
 
 pytest.importorskip("flask")
-
-if os.environ.get("ADDON_DIR") == "ha-idrac-standard":
-    pytest.skip("Export/import is dev-only until synced to Standard", allow_module_level=True)
 
 import conftest  # noqa: F401, E402
 from conftest import load_module, resolve_addon_path  # noqa: E402

@@ -1,6 +1,7 @@
 # HA-iDRAC/ha-idrac-standard/app/web_server.py
-from flask import Flask, render_template, request, redirect, flash
+from flask import Flask, render_template, request, redirect, flash, Response
 from markupsafe import Markup
+import copy
 import os
 import json
 import re
@@ -30,11 +31,107 @@ app.secret_key = os.urandom(24)
 # --- Global paths and locks ---
 STATUS_FILE = None
 SERVERS_CONFIG_FILE = "/data/servers_config.json"
+PID_STATE_FILE = "/data/pid_states.json"
 status_lock = None
 config_lock = threading.Lock()
 global_config = {}
 health_check = None
 server_manager = None
+
+_SECRET_KEY_SUBSTRINGS = ("pass", "community", "secret", "token")
+_MAX_IMPORT_BYTES = 1024 * 1024
+
+
+def _strip_secrets(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            k_lower = str(k).lower()
+            if any(sub in k_lower for sub in _SECRET_KEY_SUBSTRINGS):
+                out[k] = None
+            else:
+                out[k] = _strip_secrets(v)
+        return out
+    if isinstance(obj, list):
+        return [_strip_secrets(item) for item in obj]
+    return obj
+
+
+def _get_addon_meta():
+    name = "HA iDRAC Controller BETA"
+    version = "0.1.0-dev"
+    cfg_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    m_name = re.match(r'^name:\s*"?([^"#\r\n]+)"?', line.strip())
+                    if m_name:
+                        name = m_name.group(1).strip().strip('"')
+                    m_ver = re.match(r'^version:\s*"?([^"#\r\n]+)"?', line.strip())
+                    if m_ver:
+                        version = m_ver.group(1).strip().strip('"')
+        except OSError:
+            pass
+    return name, version
+
+
+def _load_pid_states_for_export():
+    states = {}
+    target = PID_STATE_FILE
+    try:
+        from . import main as _m
+        if getattr(_m, "PID_STATE_FILE", None):
+            target = _m.PID_STATE_FILE
+    except Exception:
+        try:
+            from app import main as _m
+            if getattr(_m, "PID_STATE_FILE", None):
+                target = _m.PID_STATE_FILE
+        except Exception:
+            pass
+    if target and os.path.exists(target):
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    states.update(loaded)
+        except (OSError, json.JSONDecodeError):
+            pass
+    if server_manager is not None:
+        for w in getattr(server_manager, "workers", []):
+            if hasattr(w, "pid") and hasattr(w.pid, "get_state"):
+                states[w.alias] = w.pid.get_state()
+    return states
+
+
+def _validate_server_dict(settings):
+    if server_manager is not None:
+        server_manager.validate_settings(settings)
+        return
+    try:
+        from .main import ServerManager
+        ServerManager.validate_settings(settings)
+        return
+    except ImportError:
+        from app.main import ServerManager
+        ServerManager.validate_settings(settings)
+
+
+def _validate_and_save_imported_pid_state(alias, pid_state):
+    if pid_state is None:
+        return None
+    try:
+        from .main import validate_pid_state, save_pid_state
+    except ImportError:
+        from app.main import validate_pid_state, save_pid_state
+    valid = validate_pid_state(pid_state)
+    if valid is None:
+        print(f"[WARNING] [{alias}] Discarded invalid pid_state during import.", flush=True)
+        return None
+    if server_manager is None:
+        save_pid_state(alias, valid, filepath=PID_STATE_FILE)
+    return valid
 
 
 # --- Helper functions ---
@@ -266,8 +363,11 @@ def add_server():
 
     if server_manager is not None:
         try:
-            server_manager.add_server(new_server)
-            flash("Saved and applied.", "success")
+            warn_msg = server_manager.add_server(new_server)
+            if warn_msg:
+                flash(warn_msg, "error")
+            else:
+                flash("Saved and applied.", "success")
         except ValueError as e:
             flash(str(e), "error")
         return redirect('../servers')
@@ -373,8 +473,11 @@ def update_server(alias):
 
     if server_manager is not None:
         try:
-            server_manager.apply_settings(alias, server_to_update)
-            flash("Saved and applied.", "success")
+            warn_msg = server_manager.apply_settings(alias, server_to_update)
+            if warn_msg:
+                flash(warn_msg, "error")
+            else:
+                flash("Saved and applied.", "success")
         except ValueError as e:
             flash(str(e), "error")
         return redirect('../../servers')
@@ -457,3 +560,129 @@ def test_snmp(alias):
         return {"success": False, "error": "snmpwalk timed out.", "disks": [], "raw": ""}, 200
     except Exception as e:
         return {"success": False, "error": str(e), "disks": [], "raw": ""}, 200
+
+
+@app.route('/servers/export', methods=['GET'])
+def export_servers():
+    include_learned = str(request.args.get('include_learned', '')).lower() in ('1', 'true', 'on', 'yes')
+    servers = load_servers_config()
+    pid_states = _load_pid_states_for_export() if include_learned else {}
+    addon_name, addon_version = _get_addon_meta()
+
+    exported = []
+    for srv in servers:
+        clean = _strip_secrets(copy.deepcopy(srv))
+        clean.pop("pid_state", None)
+        alias = clean.get("alias")
+        if include_learned and alias in pid_states and pid_states[alias] is not None:
+            clean["pid_state"] = _strip_secrets(copy.deepcopy(pid_states[alias]))
+        exported.append(clean)
+
+    payload = {
+        "format": "ha-idrac-servers",
+        "version": 1,
+        "addon": {
+            "name": addon_name,
+            "version": addon_version,
+        },
+        "servers": exported,
+    }
+    return Response(
+        json.dumps(payload, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=ha-idrac-servers.json"},
+    )
+
+
+@app.route('/servers/import', methods=['POST'])
+def import_servers():
+    uploaded = request.files.get('file')
+    if not uploaded or not uploaded.filename:
+        flash("Import rejected: please select a .json file to upload.", "error")
+        return redirect('../servers')
+    if not uploaded.filename.lower().endswith('.json'):
+        flash("Import rejected: only .json files are accepted.", "error")
+        return redirect('../servers')
+
+    raw_bytes = uploaded.read(_MAX_IMPORT_BYTES + 1)
+    if len(raw_bytes) > _MAX_IMPORT_BYTES:
+        flash("Import rejected: file exceeds the 1 MB maximum size.", "error")
+        return redirect('../servers')
+
+    try:
+        data = json.loads(raw_bytes.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        flash("Import rejected: file is not valid JSON.", "error")
+        return redirect('../servers')
+
+    if (not isinstance(data, dict)
+            or data.get("format") != "ha-idrac-servers"
+            or data.get("version") != 1
+            or not isinstance(data.get("servers"), list)):
+        flash("Import rejected: missing or unsupported 'ha-idrac-servers' version 1 format marker.", "error")
+        return redirect('../servers')
+
+    prepared = []
+    problems = []
+    for idx, entry in enumerate(data["servers"]):
+        if not isinstance(entry, dict):
+            problems.append(f"Server #{idx + 1}: entry must be a JSON object.")
+            continue
+        srv = copy.deepcopy(entry)
+        pid_state = srv.pop("pid_state", None)
+        srv["enabled"] = False
+        srv["idrac_password"] = ""
+        srv["snmp_community"] = ""
+        for k in list(srv.keys()):
+            if any(sub in str(k).lower() for sub in _SECRET_KEY_SUBSTRINGS):
+                srv[k] = ""
+        try:
+            _validate_server_dict(srv)
+            prepared.append((srv, pid_state))
+        except (ValueError, TypeError) as exc:
+            label = (srv.get("alias") or "").strip() or f"Server #{idx + 1}"
+            problems.append(f"{label}: {exc}")
+
+    if problems:
+        flash("Import rejected (no servers were imported): " + "; ".join(problems), "error")
+        return redirect('../servers')
+
+    existing = load_servers_config()
+    existing_aliases = {s.get("alias") for s in existing}
+    imported_aliases = []
+    skipped_aliases = []
+
+    for srv, pid_state in prepared:
+        alias = srv["alias"]
+        if alias in existing_aliases:
+            skipped_aliases.append(alias)
+            continue
+        existing_aliases.add(alias)
+        valid_pid = _validate_and_save_imported_pid_state(alias, pid_state)
+        if server_manager is not None:
+            server_manager.add_server(srv, pid_state=valid_pid)
+        else:
+            existing.append(srv)
+        imported_aliases.append(alias)
+
+    if server_manager is None and imported_aliases:
+        with config_lock:
+            parent = os.path.dirname(SERVERS_CONFIG_FILE) or "."
+            os.makedirs(parent, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".servers_config_", suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                json.dump(existing, f, indent=4)
+            os.replace(tmp_path, SERVERS_CONFIG_FILE)
+
+    msg_parts = []
+    if imported_aliases:
+        msg_parts.append(
+            f"Imported {len(imported_aliases)} server(s) ({', '.join(imported_aliases)}) as disabled with blank passwords. "
+            "Open each server to enter its iDRAC password (and SNMP community string if used) and enable it."
+        )
+    if skipped_aliases:
+        msg_parts.append(f"Skipped existing alias(es): {', '.join(skipped_aliases)}.")
+    if not msg_parts:
+        msg_parts.append("No servers found in the uploaded file.")
+    flash(" ".join(msg_parts), "success")
+    return redirect('../servers')

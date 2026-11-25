@@ -204,3 +204,109 @@ def test_invalid_settings_rejected_without_mutating_worker_or_disk(tmp_path, mon
         saved = json.load(f)
     assert saved[0]["pid_config"]["min_speed"] == 20
     assert saved[0]["pid_config"]["max_speed"] == 80
+
+
+def test_live_snmp_disk_poller_lifecycle_and_constructor_error_handling(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.disk_health.walk_physical_disks", lambda *a, **kw: {})
+    monkeypatch.setattr(main, "walk_physical_disks", lambda *a, **kw: {})
+
+    conf = _base_server_conf("r720")
+    mgr, _ = _make_manager(tmp_path, monkeypatch, [conf])
+    worker = main.ServerWorker(copy.deepcopy(conf), mgr.global_opts)
+    mgr.workers.append(worker)
+    assert worker.disk_poller is None
+
+    # (a) Saving a server with SNMP enabled creates and starts one poller with host/community/port/poll_minutes
+    snmp_conf = copy.deepcopy(conf)
+    snmp_conf["snmp_enabled"] = True
+    snmp_conf["snmp_community"] = "comm1"
+    snmp_conf["snmp_port"] = 1161
+    snmp_conf["disk_poll_minutes"] = 15
+
+    warn = mgr.apply_settings("r720", snmp_conf)
+    assert warn is None
+    p1 = worker.disk_poller
+    assert p1 is not None
+    assert p1.host == "10.0.0.50"
+    assert p1.community == "comm1"
+    assert p1.port == 1161
+    assert p1.poll_minutes == 15
+    assert p1.is_alive()
+
+    # (b) Changing the community restarts the poller
+    snmp_conf2 = copy.deepcopy(snmp_conf)
+    snmp_conf2["snmp_community"] = "comm2"
+    assert mgr.apply_settings("r720", snmp_conf2) is None
+    p2 = worker.disk_poller
+    assert p2 is not None and p2 is not p1
+    assert not p1.is_alive()
+    assert p2.community == "comm2"
+    assert p2.is_alive()
+
+    # (c) Disabling SNMP stops the poller and leaves none
+    snmp_off = copy.deepcopy(snmp_conf2)
+    snmp_off["snmp_enabled"] = False
+    assert mgr.apply_settings("r720", snmp_off) is None
+    assert worker.disk_poller is None
+    assert not p2.is_alive()
+
+    # (d) Exception from DiskHealthPoller constructor is logged as ERROR and returned, not swallowed
+    logs = []
+    worker._log = lambda lvl, msg: logs.append((lvl, msg))
+
+    def boom_poller(*args, **kwargs):
+        raise RuntimeError("SNMP init boom")
+
+    monkeypatch.setattr(main, "DiskHealthPoller", boom_poller)
+    warn_err = mgr.apply_settings("r720", snmp_conf)
+    assert warn_err is not None
+    assert "SNMP settings saved but disk monitoring could not start: SNMP init boom" in warn_err
+    assert any(lvl == "error" and "SNMP init boom" in msg for lvl, msg in logs)
+
+
+def test_add_server_and_startup_vs_live_disk_poller_identical(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.disk_health.walk_physical_disks", lambda *a, **kw: {})
+    monkeypatch.setattr(main, "walk_physical_disks", lambda *a, **kw: {})
+
+    def fake_run(self):
+        self.ipmi.apply_dell_fan_control_profile = lambda force=False: ""
+        self.mqtt = MagicMock()
+        self.mqtt.is_connected = False
+        while self.running:
+            time.sleep(0.02)
+        self.cleanup()
+
+    monkeypatch.setattr(main.ServerWorker, "run", fake_run)
+
+    mgr, _ = _make_manager(tmp_path, monkeypatch, [])
+    conf = _base_server_conf("r730")
+    conf["snmp_enabled"] = True
+    conf["snmp_community"] = "pub123"
+    conf["snmp_port"] = 162
+    conf["disk_poll_minutes"] = 12
+
+    # (e) add_server with SNMP enabled starts a poller
+    assert mgr.add_server(conf) is None
+    w_live = mgr.get_worker("r730")
+    assert w_live is not None
+    assert w_live.disk_poller is not None
+    assert w_live.disk_poller.is_alive()
+
+    # (f) Start-up path and live path produce pollers with identical settings for the same config
+    w_startup = main.ServerWorker(copy.deepcopy(conf), mgr.global_opts)
+    p_startup = w_startup.build_disk_poller(w_startup.config, start=False)
+    try:
+        assert (
+            w_live.disk_poller.host,
+            w_live.disk_poller.community,
+            w_live.disk_poller.port,
+            w_live.disk_poller.poll_minutes,
+        ) == (
+            p_startup.host,
+            p_startup.community,
+            p_startup.port,
+            p_startup.poll_minutes,
+        )
+    finally:
+        mgr.remove_server("r730")
+        assert w_live.disk_poller is None

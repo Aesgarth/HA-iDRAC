@@ -1,5 +1,7 @@
 # HA-iDRAC — iDRAC 7/8 (12G/13G)
 
+[![tests](https://github.com/Aesgarth/HA-iDRAC/actions/workflows/tests.yml/badge.svg)](https://github.com/Aesgarth/HA-iDRAC/actions/workflows/tests.yml)
+
 Home Assistant add-ons for monitoring and controlling Dell PowerEdge servers
 through their iDRAC via IPMI, with support for 12th- and 13th-generation
 servers (iDRAC 7/8, e.g. R720, **T430**, R430, R630, R730) and robust fan

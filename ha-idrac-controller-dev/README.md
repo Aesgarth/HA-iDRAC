@@ -32,9 +32,6 @@
 ![Add-on status page with temperatures, fan speeds and physical disk health](../images/monitor.jpg)
 *Add-on status page showing temperatures, fan RPMs, and physical disk health.*
 
-![Add-on status page showing temperatures, power and fan speeds](../images/status-page.png)
-*Live status dashboard showing server temperatures, power consumption, target fan speed, and individual fan RPMs.*
-
 ![Manage Servers page with export and import settings](../images/manage-servers.png)
 *Manage Servers page with per-server controls and settings export/import.*
 
@@ -197,10 +194,10 @@ See [Automation examples](AUTOMATIONS.md) for ready-to-use Home Assistant notifi
 
 ## Home Assistant Dashboard
 
-The Home Assistant dashboard shown in the screenshot is built directly from the MQTT entities published by the add-on:
-* **Status & Hardware Health:** At-a-glance status tiles for iDRAC connectivity, fan health, physical disk health, power draw, target fan speed, and PSU/redundancy status.
+The Home Assistant dashboard shown in the screenshot is built from the add-on's MQTT entities using [`tools/make_dashboard.py`](../tools/make_dashboard.py) (see [docs/DASHBOARD.md](../docs/DASHBOARD.md) for step-by-step instructions):
+* **Status:** iDRAC connectivity, fan health, disk health, power draw, target fan speed and a shutdown button. PSU and redundancy tiles are added automatically when those entities exist.
 * **Temperatures:** Real-time gauges for Hottest CPU, Inlet, and Exhaust temperatures alongside a 24-hour temperature history graph.
-* **Cooling and Power:** 24-hour history graphs comparing target fan speed (%) and server power consumption (W).
+* **Cooling and power & Hardware health:** 24-hour fan target and power graphs, individual fan speeds, power supplies, physical disks, and last successful poll.
 
 ---
 

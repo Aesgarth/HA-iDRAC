@@ -1,3 +1,7 @@
+## 0.1.0-dev.41 - 2026-11-26
+
+* Add dashboard generator and how-to; screenshot tidy-up
+
 ## 0.1.0-dev.40 - 2026-11-25
 
 * Fix disk monitoring not starting after saving SNMP settings in the UI

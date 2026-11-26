@@ -59,6 +59,8 @@ control and hardware monitoring.
 
 ![Example Home Assistant dashboard for a server, with temperature gauges, status tiles and 24-hour history graphs](images/dashboard.jpg)
 
+See [docs/DASHBOARD.md](docs/DASHBOARD.md) for how to generate this Home Assistant dashboard from your server's entities with [`tools/make_dashboard.py`](tools/make_dashboard.py).
+
 ### Which one should I use?
 
 Use **HA iDRAC Controller Standard** for normal use. Only install **HA iDRAC Controller BETA** if you want to test upcoming changes before they land in Standard. **Never run two add-ons against the same iDRAC server at the same time**, as both will send competing IPMI fan commands.

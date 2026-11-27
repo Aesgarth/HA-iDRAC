@@ -131,6 +131,8 @@ an older snapshot of the BETA code and has been removed. If you were using
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow (editing Dev first, syncing to Standard with `tools/sync_dev_to_standard.py`, running the `ADDON_DIR` test matrix in a fresh virtualenv, and versioning/changelog rules).
+
 
 ```sh
 python -m pytest -q

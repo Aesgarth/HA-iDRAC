@@ -1,0 +1,70 @@
+name: Bug Report
+description: Report a bug, sensor parsing issue, or fan control problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! **Before submitting, please remove any iDRAC passwords, SNMP community strings, or private service tags from logs and command output.**
+
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Add-on
+      description: Which add-on are you running?
+      options:
+        - HA iDRAC Controller Standard (ha_idrac_controller_standard)
+        - HA iDRAC Controller BETA / Dev (ha_idrac_controller_development)
+        - HA iDRAC Controller Legacy 0.1.2 (ha_idrac_controller)
+    validations:
+      required: true
+
+  - type: input
+    id: addon_version
+    attributes:
+      label: Add-on Version
+      description: Version shown on the add-on Info tab (e.g. 0.3.1 or 0.1.0-dev.41)
+      placeholder: "0.3.1"
+    validations:
+      required: true
+
+  - type: input
+    id: server_hardware
+    attributes:
+      label: Server Model & iDRAC Generation / Firmware
+      description: Dell PowerEdge model, iDRAC generation (7 / 8 / 9), and firmware version
+      placeholder: "PowerEdge R720, iDRAC 7, firmware 2.65.65.65"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_log
+    attributes:
+      label: Add-on Debug Log Excerpt
+      description: |
+        Set `log_level: debug` on the add-on Configuration tab, restart the add-on, and paste the relevant log lines.
+        ⚠️ **WARNING:** Remove any passwords, SNMP community strings, or sensitive details before posting.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: sdr_elist
+    attributes:
+      label: Output of `ipmitool sdr elist` (Optional, for sensor/parsing issues)
+      description: |
+        For missing or misidentified temperatures, fans, PSUs, or power readings, please attach the output of:
+        `IPMI_PASSWORD='<your_password>' ipmitool -I lanplus -H <idrac_ip> -U <username> -E sdr elist`
+        (For SNMP disk issues, use the **"Test disk SNMP" > "Copy raw SNMP output"** button on the Edit Server page in the add-on Web UI.)
+      render: text
+    validations:
+      required: false

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting Guide
+    url: https://github.com/Aesgarth/HA-iDRAC/blob/main/ha-idrac-standard/README.md#troubleshooting
+    about: Check the README troubleshooting section for common IPMI, fan control refusal (0xc1/0xd4/0xd5), and SNMP issues before opening an issue.
